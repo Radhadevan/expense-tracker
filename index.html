@@ -1,0 +1,571 @@
+﻿<!DOCTYPE html>
+<html lang=en>
+<head>
+  <meta charset=UTF-8>
+  <meta name=viewport content=width=device-width, initial-scale=1.0, viewport-fit=cover>
+  <meta name=theme-color content=#070c09>
+  <title>SpendFlow — Daily Expense & Month-End PDF</title>
+  <link rel=manifest href=manifest.json>
+  <link rel=icon href=icon.svg type=image/svg+xml>
+  <link rel=preconnect href=https://fonts.googleapis.com>
+  <link rel=preconnect href=https://fonts.gstatic.com crossorigin>
+  <link href=https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap rel=stylesheet>
+  <link rel=stylesheet href=style.css>
+  
+  <!-- jsPDF & AutoTable for client-side Month-End PDF Statements -->
+  <script src=https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js></script>
+  <script src=https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js></script>
+</head>
+<body>
+  <div class=app-container>
+    <!-- TOP APP HEADER -->
+    <header class=app-header>
+      <div class=header-left>
+        <div class=app-logo>
+          <img src=icon.svg alt=SpendFlow Logo class=logo-icon>
+        </div>
+        <div>
+          <div class=brand-title>SPEND<span>FLOW</span></div>
+          <div class=brand-tag>DAILY EXPENSE &amp; MONTH-END PDF</div>
+        </div>
+      </div>
+
+      <div class=header-center>
+        <!-- MONTH NAVIGATOR -->
+        <div class=month-selector>
+          <button type=button class=month-nav-btn onclick=SpendApp.changeMonth(-1) title=Previous Month>‹</button>
+          <div class=current-month-display id=currentMonthDisplay>October 2026</div>
+          <button type=button class=month-nav-btn onclick=SpendApp.changeMonth(1) title=Next Month>›</button>
+          <button type=button class=today-jump-btn onclick=SpendApp.jumpToCurrentMonth() title=Jump to Current Month>Today</button>
+        </div>
+      </div>
+
+      <div class=header-right>
+        <select id=currencySelector class=currency-dropdown onchange=SpendApp.setCurrency(this.value) title=Choose Currency>
+          <option value=₹ selected>₹ INR</option>
+          <option value=$>$ USD</option>
+          <option value=€>€ EUR</option>
+          <option value=£>£ GBP</option>
+          <option value=AED>AED</option>
+        </select>
+        <button type=button class=pdf-export-header-btn onclick=SpendApp.switchTab('pdf')>
+          <span>📄</span> Month-End PDF
+        </button>
+      </div>
+    </header>
+
+    <!-- KEY FINANCIAL METRICS BAR -->
+    <section class=metrics-grid>
+      <!-- Total Spent Card -->
+      <div class=metric-card glow-card>
+        <div class=metric-header>
+          <span class=metric-label>TOTAL SPENT THIS MONTH</span>
+          <span class=metric-badge id=txCountBadge>0 TXNs</span>
+        </div>
+        <div class=metric-value-row>
+          <div class=metric-value id=monthTotalSpent>₹0</div>
+          <div class=metric-sub id=monthBudgetDiff>0% of budget</div>
+        </div>
+        <div class=metric-footer>
+          <span id=highestExpenseDay>Highest day: —</span>
+        </div>
+      </div>
+
+      <!-- Budget & Burn Rate Card -->
+      <div class=metric-card>
+        <div class=metric-header>
+          <span class=metric-label>MONTHLY BUDGET</span>
+          <button type=button class=mini-adjust-btn onclick=SpendApp.openBudgetModal()>✏️ Edit</button>
+        </div>
+        <div class=metric-value-row>
+          <div class=metric-value id=monthBudgetDisplay>₹30,000</div>
+          <div class=metric-sub remaining-val id=monthRemainingBudget>₹30,000 left</div>
+        </div>
+        <div class=budget-progress-bar>
+          <div class=budget-progress-fill id=budgetProgressFill style=width: 0%></div>
+        </div>
+        <div class=metric-footer>
+          <span id=dailyAllowance>Daily allowance: ₹0 / day</span>
+        </div>
+      </div>
+
+      <!-- Daily Average & Today's Card -->
+      <div class=metric-card>
+        <div class=metric-header>
+          <span class=metric-label>TODAY'S EXPENSE</span>
+          <span class=today-date-badge id=todayHeaderDate>Today</span>
+        </div>
+        <div class=metric-value-row>
+          <div class=metric-value id=todayExpenseDisplay>₹0</div>
+          <div class=metric-sub id=dailyAvgDisplay>Avg: ₹0 / day</div>
+        </div>
+        <div class=metric-footer>
+          <span id=topCategoryMonth>Top category: —</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- NAVIGATION TABS -->
+    <nav class=nav-tabs>
+      <button type=button class=tab-btn active data-tab=log onclick=SpendApp.switchTab('log')>
+        <span class=tab-icon>⚡</span> Add Expense
+      </button>
+      <button type=button class=tab-btn data-tab=transactions onclick=SpendApp.switchTab('transactions')>
+        <span class=tab-icon>📋</span> Transactions (<span id=tabTxCount>0</span>)
+      </button>
+      <button type=button class=tab-btn data-tab=analytics onclick=SpendApp.switchTab('analytics')>
+        <span class=tab-icon>📊</span> Category Breakdown
+      </button>
+      <button type=button class=tab-btn special-pdf-tab data-tab=pdf onclick=SpendApp.switchTab('pdf')>
+        <span class=tab-icon>📄</span> Month-End PDF Hub
+      </button>
+      <button type=button class=tab-btn data-tab=settings onclick=SpendApp.switchTab('settings')>
+        <span class=tab-icon>⚙️</span> Settings
+      </button>
+    </nav>
+
+    <!-- TAB 1: DAILY LOGGER -->
+    <section id=tab-log class=tab-content active>
+      <div class=logger-layout>
+        <!-- EXPENSE ENTRY FORM -->
+        <div class=glass-panel form-panel>
+          <div class=panel-header>
+            <h2>Log Daily Expense</h2>
+            <span class=panel-sub>Enter your purchase details below</span>
+          </div>
+
+          <form id=expenseForm onsubmit=SpendApp.handleAddExpense(event)>
+            <div class=form-row date-amount-row>
+              <div class=form-group flex-1>
+                <label for=expDate>Expense Date</label>
+                <input type=date id=expDate required>
+              </div>
+
+              <div class=form-group flex-1>
+                <label for=expAmount>Amount (<span class=currency-symbol>₹</span>)</label>
+                <div class=amount-input-wrap>
+                  <span class=input-currency-prefix>₹</span>
+                  <input type=number id=expAmount step=any min=1 max=9999999 placeholder=0.00 required>
+                </div>
+              </div>
+            </div>
+
+            <!-- QUICK AMOUNT PRESETS -->
+            <div class=quick-presets>
+              <span class=preset-label>Quick Add:</span>
+              <button type=button class=preset-chip onclick=SpendApp.addPresetAmount(50)>+50</button>
+              <button type=button class=preset-chip onclick=SpendApp.addPresetAmount(100)>+100</button>
+              <button type=button class=preset-chip onclick=SpendApp.addPresetAmount(250)>+250</button>
+              <button type=button class=preset-chip onclick=SpendApp.addPresetAmount(500)>+500</button>
+              <button type=button class=preset-chip onclick=SpendApp.addPresetAmount(1000)>+1,000</button>
+              <button type=button class=preset-chip onclick=SpendApp.addPresetAmount(2000)>+2,000</button>
+            </div>
+
+            <!-- CATEGORY SELECTOR GRID -->
+            <div class=form-group>
+              <label>Select Category</label>
+              <div class=category-grid id=categoryPicker>
+                <!-- Dynamically populated or static pills -->
+                <button type=button class=cat-pill active data-category=Food &amp; Dining>
+                  <span class=cat-icon>🍔</span> Food &amp; Dining
+                </button>
+                <button type=button class=cat-pill data-category=Groceries>
+                  <span class=cat-icon>🛒</span> Groceries
+                </button>
+                <button type=button class=cat-pill data-category=Transport &amp; Fuel>
+                  <span class=cat-icon>🚗</span> Transport &amp; Fuel
+                </button>
+                <button type=button class=cat-pill data-category=Bills &amp; Utilities>
+                  <span class=cat-icon>💡</span> Bills &amp; Utilities
+                </button>
+                <button type=button class=cat-pill data-category=Shopping>
+                  <span class=cat-icon>🛍️</span> Shopping
+                </button>
+                <button type=button class=cat-pill data-category=Entertainment>
+                  <span class=cat-icon>🎬</span> Entertainment
+                </button>
+                <button type=button class=cat-pill data-category=Health &amp; Medical>
+                  <span class=cat-icon>💊</span> Health &amp; Medical
+                </button>
+                <button type=button class=cat-pill data-category=Education &amp; Work>
+                  <span class=cat-icon>📚</span> Education &amp; Work
+                </button>
+                <button type=button class=cat-pill data-category=Rent &amp; Living>
+                  <span class=cat-icon>🏠</span> Rent &amp; Living
+                </button>
+                <button type=button class=cat-pill data-category=Other>
+                  <span class=cat-icon>📦</span> Other
+                </button>
+              </div>
+            </div>
+
+            <!-- PAYMENT MODE -->
+            <div class=form-group>
+              <label>Payment Method</label>
+              <div class=payment-grid id=paymentPicker>
+                <button type=button class=pay-pill active data-pay=UPI / GPay>📱 UPI / GPay</button>
+                <button type=button class=pay-pill data-pay=Credit Card>💳 Credit Card</button>
+                <button type=button class=pay-pill data-pay=Debit Card>🏦 Debit Card</button>
+                <button type=button class=pay-pill data-pay=Cash>💵 Cash</button>
+                <button type=button class=pay-pill data-pay=Net Banking>🌐 Net Banking</button>
+              </div>
+            </div>
+
+            <!-- NOTE / MERCHANT DESCRIPTION -->
+            <div class=form-group>
+              <label for=expNote>Merchant / Description</label>
+              <input type=text id=expNote placeholder=e.g., Grocery store, Starbucks, Uber ride, Electricity bill maxlength=100>
+            </div>
+
+            <button type=submit class=primary-btn submit-expense-btn>
+              <span>➕ Save Daily Expense</span>
+            </button>
+          </form>
+        </div>
+
+        <!-- QUICK TODAY OVERVIEW & RECENT 5 -->
+        <div class=glass-panel summary-sidebar>
+          <div class=panel-header>
+            <h3>Today's Activity</h3>
+            <span class=today-count-badge id=sidebarTodayCount>0 items</span>
+          </div>
+
+          <div class=today-spent-banner>
+            <span class=banner-title>Spent Today</span>
+            <span class=banner-amt id=sidebarTodayAmount>₹0</span>
+          </div>
+
+          <div class=recent-list-header>RECENT TRANSACTIONS</div>
+          <div class=recent-mini-list id=recentMiniList>
+            <!-- Dynamically populated -->
+          </div>
+
+          <button type=button class=view-all-txns-btn onclick=SpendApp.switchTab('transactions')>
+            View All Month Transactions →
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 2: TRANSACTIONS LIST & FILTERS -->
+    <section id=tab-transactions class=tab-content>
+      <div class=glass-panel>
+        <div class=txn-controls-header>
+          <div>
+            <h2>Itemized Transactions</h2>
+            <span class=panel-sub id=txnSubtitle>Showing records for October 2026</span>
+          </div>
+
+          <div class=txn-filters>
+            <input type=text id=txnSearchInput placeholder=🔍 Search merchant, note... oninput=SpendApp.filterTransactions()>
+            <select id=txnCategoryFilter onchange=SpendApp.filterTransactions()>
+              <option value=ALL>All Categories</option>
+              <option value=Food &amp; Dining>🍔 Food &amp; Dining</option>
+              <option value=Groceries>🛒 Groceries</option>
+              <option value=Transport &amp; Fuel>🚗 Transport &amp; Fuel</option>
+              <option value=Bills &amp; Utilities>💡 Bills &amp; Utilities</option>
+              <option value=Shopping>🛍️ Shopping</option>
+              <option value=Entertainment>🎬 Entertainment</option>
+              <option value=Health &amp; Medical>💊 Health &amp; Medical</option>
+              <option value=Education &amp; Work>📚 Education &amp; Work</option>
+              <option value=Rent &amp; Living>🏠 Rent &amp; Living</option>
+              <option value=Other>📦 Other</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- TRANSACTIONS TABLE / LIST -->
+        <div class=txn-table-wrapper>
+          <table class=txn-table>
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Category</th>
+                <th>Description / Merchant</th>
+                <th>Payment Mode</th>
+                <th style=text-align: right;>Amount</th>
+                <th style=text-align: center;>Actions</th>
+              </tr>
+            </thead>
+            <tbody id=txnTableBody>
+              <!-- Dynamically populated -->
+            </tbody>
+          </table>
+        </div>
+
+        <div class=table-empty-state id=txnEmptyState style=display: none;>
+          <div class=empty-icon>💸</div>
+          <h3>No transactions found</h3>
+          <p>Log a daily expense above or change your search filter.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 3: CATEGORY ANALYTICS & BREAKDOWN -->
+    <section id=tab-analytics class=tab-content>
+      <div class=analytics-grid>
+        <div class=glass-panel>
+          <div class=panel-header>
+            <h2>Spending by Category</h2>
+            <span class=panel-sub>Breakdown of where your money went this month</span>
+          </div>
+          <div class=category-bars-list id=categoryBarsList>
+            <!-- Dynamically populated -->
+          </div>
+        </div>
+
+        <div class=glass-panel>
+          <div class=panel-header>
+            <h2>Payment Methods Distribution</h2>
+            <span class=panel-sub>Volume by payment channel</span>
+          </div>
+          <div class=payment-bars-list id=paymentBarsList>
+            <!-- Dynamically populated -->
+          </div>
+
+          <div class=stats-mini-box>
+            <div class=stat-mini-row>
+              <span class=stat-mini-label>Total Days with Expenses</span>
+              <b class=stat-mini-val id=activeSpendDays>0 days</b>
+            </div>
+            <div class=stat-mini-row>
+              <span class=stat-mini-label>Average per Active Day</span>
+              <b class=stat-mini-val id=avgPerActiveDay>₹0</b>
+            </div>
+            <div class=stat-mini-row>
+              <span class=stat-mini-label>Largest Single Transaction</span>
+              <b class=stat-mini-val id=largestTxnDisplay>₹0</b>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 4: MONTH-END PDF GENERATOR HUB -->
+    <section id=tab-pdf class=tab-content>
+      <div class=pdf-hub-grid>
+        <!-- PDF Configuration Panel -->
+        <div class=glass-panel pdf-config-card>
+          <div class=panel-header>
+            <h2>📄 Month-End PDF Statement</h2>
+            <span class=panel-sub>Export a structured, professional monthly financial statement</span>
+          </div>
+
+          <div class=pdf-settings-group>
+            <div class=form-group>
+              <label for=pdfStatementMonth>Statement Month</label>
+              <input type=month id=pdfStatementMonth onchange=SpendApp.updatePdfPreviewStats()>
+            </div>
+
+            <div class=form-group>
+              <label for=pdfUserName>Account / Prepared For</label>
+              <input type=text id=pdfUserName value=Personal Expense Statement placeholder=Your Name or Business Name>
+            </div>
+
+            <div class=form-group>
+              <label for=pdfCurrencyCode>Currency Display</label>
+              <select id=pdfCurrencyCode>
+                <option value=₹>₹ INR (Indian Rupee)</option>
+                <option value=$>$ USD (US Dollar)</option>
+                <option value=€>€ EUR (Euro)</option>
+                <option value=£>£ GBP (British Pound)</option>
+                <option value=AED>AED (UAE Dirham)</option>
+              </select>
+            </div>
+
+            <div class=form-group checkbox-group>
+              <label class=custom-checkbox>
+                <input type=checkbox id=pdfIncludeCategorySummary checked>
+                <span>Include Category Analytics Summary</span>
+              </label>
+              <label class=custom-checkbox>
+                <input type=checkbox id=pdfIncludeItemizedList checked>
+                <span>Include Itemized Transaction Ledger</span>
+              </label>
+              <label class=custom-checkbox>
+                <input type=checkbox id=pdfIncludeAuditFooters checked>
+                <span>Include Official Sign-Off &amp; Page Numbers</span>
+              </label>
+            </div>
+
+            <div class=pdf-action-buttons>
+              <button type=button class=primary-btn pdf-download-btn onclick=SpendApp.generateAndDownloadPdf()>
+                <span>📥 Download Month-End PDF</span>
+              </button>
+              <button type=button class=secondary-btn onclick=SpendApp.previewPdfPrint()>
+                <span>🖨️ Print / Save as PDF</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Live Statement Preview Overview -->
+        <div class=glass-panel pdf-preview-card>
+          <div class=panel-header>
+            <h3>Statement Summary Preview</h3>
+            <span class=pdf-badge>Official PDF Format</span>
+          </div>
+
+          <div class=pdf-preview-box>
+            <div class=preview-header-mock>
+              <div class=mock-brand>SPENDFLOW FINANCIAL STATEMENT</div>
+              <div class=mock-period id=pdfMockPeriod>Month of October 2026</div>
+            </div>
+
+            <div class=mock-stats-grid>
+              <div class=mock-stat>
+                <span>TOTAL SPENT</span>
+                <b id=pdfMockTotal>₹0</b>
+              </div>
+              <div class=mock-stat>
+                <span>SET BUDGET</span>
+                <b id=pdfMockBudget>₹30,000</b>
+              </div>
+              <div class=mock-stat>
+                <span>SAVINGS / BALANCE</span>
+                <b id=pdfMockVariance style=color: #00f59b>₹30,000</b>
+              </div>
+              <div class=mock-stat>
+                <span>TOTAL TRANSACTIONS</span>
+                <b id=pdfMockTxnCount>0</b>
+              </div>
+            </div>
+
+            <div class=mock-table-preview>
+              <div class=mock-table-title>WHAT'S INCLUDED IN THIS PDF:</div>
+              <ul class=pdf-features-list>
+                <li>✅ High-resolution vector header &amp; metadata</li>
+                <li>✅ Executive Summary KPI cards (Total, Budget, Variance, Daily Avg)</li>
+                <li>✅ Category expense breakdown table with percentages</li>
+                <li>✅ Complete chronologically ordered itemized ledger</li>
+                <li>✅ Formatted currency symbols &amp; payment method badges</li>
+                <li>✅ Clean multi-page pagination (Page X of Y) with verification notice</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 5: SETTINGS & DATA -->
+    <section id=tab-settings class=tab-content>
+      <div class=settings-grid>
+        <div class=glass-panel>
+          <div class=panel-header>
+            <h2>Preferences &amp; Monthly Budget</h2>
+            <span class=panel-sub>Manage your limits and local preferences</span>
+          </div>
+
+          <div class=settings-form>
+            <div class=form-group>
+              <label for=settingsDefaultBudget>Default Monthly Budget Target (<span class=currency-symbol>₹</span>)</label>
+              <input type=number id=settingsDefaultBudget value=30000 step=500 min=1000>
+              <button type=button class=secondary-btn style=margin-top: 8px onclick=SpendApp.saveDefaultBudget()>Save Budget</button>
+            </div>
+
+            <hr class=divider>
+
+            <div class=form-group>
+              <label>Sample Data</label>
+              <p class=muted-text>Load realistic sample transactions for the current month to test analytics &amp; PDF reports.</p>
+              <button type=button class=secondary-btn onclick=SpendApp.loadSampleData()>
+                ✨ Load Sample Data
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class=glass-panel>
+          <div class=panel-header>
+            <h2>Backup &amp; Storage</h2>
+            <span class=panel-sub>100% offline &amp; private on your device</span>
+          </div>
+
+          <div class=settings-form>
+            <div class=backup-actions>
+              <button type=button class=secondary-btn onclick=SpendApp.exportJsonBackup()>
+                💾 Export JSON Backup
+              </button>
+              
+              <label class=secondary-btn file-upload-btn>
+                📂 Import JSON Backup
+                <input type=file id=importJsonInput accept=.json onchange=SpendApp.importJsonBackup(event) style=display: none;>
+              </label>
+
+              <button type=button class=danger-btn onclick=SpendApp.clearAllData()>
+                🗑️ Clear All Expense Data
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- FOOTER -->
+    <footer class=app-footer>
+      <div>SpendFlow PWA · Offline-Ready &amp; Private · Stored in LocalStorage</div>
+    </footer>
+  </div>
+
+  <!-- EDIT EXPENSE MODAL -->
+  <div class=modal-overlay id=editModal style=display: none;>
+    <div class=modal-card>
+      <div class=modal-header>
+        <h3>Edit Expense</h3>
+        <button type=button class=modal-close-btn onclick=SpendApp.closeEditModal()>✕</button>
+      </div>
+      <form id=editExpenseForm onsubmit=SpendApp.saveEditedExpense(event)>
+        <input type=hidden id=editTxnId>
+        <div class=form-group>
+          <label for=editDate>Date</label>
+          <input type=date id=editDate required>
+        </div>
+        <div class=form-group>
+          <label for=editAmount>Amount</label>
+          <input type=number id=editAmount step=any min=1 required>
+        </div>
+        <div class=form-group>
+          <label for=editCategory>Category</label>
+          <select id=editCategory required>
+            <option value=Food &amp; Dining>🍔 Food &amp; Dining</option>
+            <option value=Groceries>🛒 Groceries</option>
+            <option value=Transport &amp; Fuel>🚗 Transport &amp; Fuel</option>
+            <option value=Bills &amp; Utilities>💡 Bills &amp; Utilities</option>
+            <option value=Shopping>🛍️ Shopping</option>
+            <option value=Entertainment>🎬 Entertainment</option>
+            <option value=Health &amp; Medical>💊 Health &amp; Medical</option>
+            <option value=Education &amp; Work>📚 Education &amp; Work</option>
+            <option value=Rent &amp; Living>🏠 Rent &amp; Living</option>
+            <option value=Other>📦 Other</option>
+          </select>
+        </div>
+        <div class=form-group>
+          <label for=editPayment>Payment Method</label>
+          <select id=editPayment>
+            <option value=UPI / GPay>📱 UPI / GPay</option>
+            <option value=Credit Card>💳 Credit Card</option>
+            <option value=Debit Card>🏦 Debit Card</option>
+            <option value=Cash>💵 Cash</option>
+            <option value=Net Banking>🌐 Net Banking</option>
+          </select>
+        </div>
+        <div class=form-group>
+          <label for=editNote>Description / Merchant</label>
+          <input type=text id=editNote maxlength=100>
+        </div>
+        <div class=modal-actions>
+          <button type=button class=secondary-btn onclick=SpendApp.closeEditModal()>Cancel</button>
+          <button type=submit class=primary-btn>Save Changes</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- TOAST NOTIFICATION CONTAINER -->
+  <div id=toastNotification class=toast>Expense recorded!</div>
+
+  <!-- APPLICATION JAVASCRIPT -->
+  <script src=pdf-generator.js></script>
+  <script src=app.js></script>
+</body>
+</html>

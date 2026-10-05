@@ -1,0 +1,17 @@
+﻿{
+  name: SpendFlow - Daily Expense & Month-End PDF,
+  short_name: SpendFlow,
+  description: Daily Expense Calculator with Automated Month-End PDF Statements & Analytics,
+  start_url: ./index.html,
+  display: standalone,
+  background_color: #070c09,
+  theme_color: #00f59b,
+  icons: [
+    {
+      src: icon.svg,
+      sizes: 512x512,
+      type: image/svg+xml,
+      purpose: any maskable
+    }
+  ]
+}
