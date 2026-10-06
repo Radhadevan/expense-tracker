@@ -1089,19 +1089,6 @@
       const recentTxns = transactions.slice(0, 5);
 
       return h('div', { className: 'page-view' },
-        // SMS Tracking Header Indicator (Requirement #25)
-        h('div', { style: { display: 'flex', justifyContent: 'flex-end', marginBottom: '10px' } },
-          h('div', {
-            className: 'sms-home-badge',
-            onClick: () => setActiveTab('SMS_TRACKING'),
-            title: 'SMS Auto-Tracking'
-          },
-            h('span', { className: `sms-status-dot ${smsSettings.enabled ? '' : 'off'}` }),
-            h('span', null, smsSettings.enabled ? 'SMS TRACKING ● ON' : 'SMS TRACKING ● OFF'),
-            smsMetrics.detectedToday > 0 ? h('span', { className: 'sms-count-pill' }, `${smsMetrics.detectedToday} auto-detected today`) : null
-          )
-        ),
-
         // Main Available Balance Card
         h('div', { className: 'balance-card' },
           h('div', { className: 'balance-header' },
@@ -1401,7 +1388,6 @@
                       h('div', { className: 'txn-meta' },
                         h('span', { className: 'txn-pill' }, t.categoryName || 'Other'),
                         h('span', { className: 'txn-pill' }, t.paymentMethod || 'UPI'),
-                        t.source === 'SMS' ? h('span', { className: 'txn-source-badge sms' }, 'SMS') : null,
                         t.isRecurring ? h('span', { className: 'txn-pill', style: { color: 'var(--neon-green)' } }, '🔄 Recurring') : null
                       ),
                       t.notes ? h('div', { style: { fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' } }, t.notes) : null
@@ -1796,41 +1782,6 @@
 
         // Settings Rows
         h('div', { className: 'settings-hub-grid' },
-          // SMS Auto-Tracking Shortcut
-          h('div', { className: 'settings-row', onClick: () => setActiveTab('SMS_TRACKING') },
-            h('div', { className: 'settings-row-left' },
-              h('span', { className: 'settings-icon' }, '📱'),
-              h('div', null,
-                h('div', { className: 'settings-label' },
-                  'SMS Auto-Tracking',
-                  smsMetrics.waitingReview > 0
-                    ? h('span', { className: 'sms-count-pill', style: { marginLeft: '8px' } }, `${smsMetrics.waitingReview} to review`)
-                    : null
-                ),
-                h('div', { className: 'settings-sub' }, 'Detect bank & UPI transaction alerts automatically')
-              )
-            ),
-            h('span', {
-              style: {
-                color: smsSettings.enabled ? 'var(--neon-green)' : 'var(--text-dim)',
-                fontWeight: 800,
-                fontSize: '12px'
-              }
-            }, smsSettings.enabled ? '● ON' : '○ OFF')
-          ),
-
-          // Developer SMS Simulator
-          h('div', { className: 'settings-row', onClick: () => setActiveTab('SMS_SIMULATOR') },
-            h('div', { className: 'settings-row-left' },
-              h('span', { className: 'settings-icon' }, '🧪'),
-              h('div', null,
-                h('div', { className: 'settings-label' }, 'Developer SMS Simulator'),
-                h('div', { className: 'settings-sub' }, 'Test 10 bank & UPI message fixtures on-device')
-              )
-            ),
-            h('span', { style: { color: 'var(--text-dim)' } }, '›')
-          ),
-
           // Payment Accounts
           h('div', { className: 'settings-row', onClick: () => setActiveTab('ACCOUNTS') },
             h('div', { className: 'settings-row-left' },
