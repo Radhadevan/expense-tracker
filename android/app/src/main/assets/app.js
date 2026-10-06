@@ -779,6 +779,7 @@
     // Modals & UI States
     const [isAddTxnOpen, setIsAddTxnOpen] = useState(false);
     const [editingTxn, setEditingTxn] = useState(null);
+    const [isDayDetailsOpen, setIsDayDetailsOpen] = useState(false);
     const [isAddGoalOpen, setIsAddGoalOpen] = useState(false);
     const [editingGoal, setEditingGoal] = useState(null);
     const [activeGoalForContrib, setActiveGoalForContrib] = useState(null);
@@ -1732,7 +1733,10 @@
           h('button', {
             type: 'button',
             className: `quick-date-chip ${dateFilterMode === 'CALENDAR' ? 'active' : ''}`,
-            onClick: () => setDateFilterMode('CALENDAR')
+            onClick: () => {
+              setDateFilterMode('CALENDAR');
+              setIsDayDetailsOpen(true);
+            }
           }, `📅 ${selectedDateInfo.shortFormatted}`),
           h('button', {
             type: 'button',
@@ -1837,6 +1841,7 @@
                         setCalYear(cell.year);
                         setCalMonth(cell.month);
                       }
+                      setIsDayDetailsOpen(true);
                     }
                   },
                     h('span', { className: 'day-num' }, cell.day),
@@ -1901,11 +1906,26 @@
             // Selected Date Summary Card
             h('div', { className: 'date-summary-card' },
               h('div', { className: 'date-summary-header' },
-                h('div', { className: 'date-summary-title' },
+                h('div', {
+                  className: 'date-summary-title clickable',
+                  title: 'Click to open day edit options',
+                  onClick: () => setIsDayDetailsOpen(true)
+                },
                   h('span', null, '📅'),
                   ` Selected Date: ${selectedDateInfo.formatted}`
                 ),
-                h('div', { className: 'date-summary-weekday' }, selectedDateInfo.weekday)
+                h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px' } },
+                  h('div', { className: 'date-summary-weekday' }, selectedDateInfo.weekday),
+                  h('button', {
+                    type: 'button',
+                    className: 'edit-day-btn',
+                    title: 'Edit details for this day',
+                    onClick: (e) => {
+                      e.stopPropagation();
+                      setIsDayDetailsOpen(true);
+                    }
+                  }, '✏️ Edit Day')
+                )
               ),
               h('div', { className: 'date-summary-metrics' },
                 h('div', { className: 'date-metric-item' },
@@ -1931,14 +1951,22 @@
                 h('span', null, '📋'),
                 ` Transactions (${filtered.length})`
               ),
-              h('button', {
-                type: 'button',
-                className: 'today-jump-btn',
-                onClick: () => {
-                  setEditingTxn(null);
-                  setIsAddTxnOpen(true);
-                }
-              }, '+ Add for Date')
+              h('div', { style: { display: 'flex', gap: '6px' } },
+                h('button', {
+                  type: 'button',
+                  className: 'edit-day-btn',
+                  title: 'Open day editor and options',
+                  onClick: () => setIsDayDetailsOpen(true)
+                }, '✏️ Edit Day'),
+                h('button', {
+                  type: 'button',
+                  className: 'today-jump-btn',
+                  onClick: () => {
+                    setEditingTxn(null);
+                    setIsAddTxnOpen(true);
+                  }
+                }, '+ Add')
+              )
             ),
 
             filtered.length === 0
@@ -2769,6 +2797,33 @@
     // MODAL DIALOGS
     // =========================================================================
 
+    // Day Details & Edit Popup Modal (Opens when selecting a day or clicking Date Edit Option)
+    const renderDayDetailsModal = () => {
+      if (!isDayDetailsOpen) return null;
+
+      return h(DayDetailsModalDialog, {
+        dateStr: selectedDate,
+        dateInfo: selectedDateInfo,
+        dateStats,
+        transactions,
+        currency: profile.currency,
+        onClose: () => setIsDayDetailsOpen(false),
+        onEditTxn: (txn) => {
+          setIsDayDetailsOpen(false);
+          setEditingTxn(txn);
+          setIsAddTxnOpen(true);
+        },
+        onAddTxn: () => {
+          setIsDayDetailsOpen(false);
+          setEditingTxn(null);
+          setIsAddTxnOpen(true);
+        },
+        onDeleteTxn: (txn) => {
+          setDeletingTxnId(txn.id);
+        }
+      });
+    };
+
     // Add / Edit Transaction Modal ("Add Money Activity" - Requirement #1)
     const renderAddTxnModal = () => {
       if (!isAddTxnOpen) return null;
@@ -3027,6 +3082,7 @@
       activeTab === 'MORE' && renderMoreView(),
 
       // Modals
+      renderDayDetailsModal(),
       renderAddTxnModal(),
       renderGoalModal(),
       renderContributionModal(),
@@ -3080,6 +3136,186 @@
   // ===========================================================================
   // MODAL DIALOG COMPONENTS
   // ===========================================================================
+
+  // Day Details & Edit Popup Modal Dialog (Opens when selecting a day or clicking Date Edit Option)
+  function DayDetailsModalDialog({
+    dateStr,
+    dateInfo,
+    dateStats,
+    transactions,
+    currency,
+    onClose,
+    onEditTxn,
+    onAddTxn,
+    onDeleteTxn
+  }) {
+    // Filter transactions specifically for this date
+    const dayTxns = transactions.filter((t) => t.date === dateStr);
+
+    return h('div', { className: 'modal-backdrop', onClick: onClose },
+      h('div', {
+        className: 'day-details-sheet-card',
+        onClick: (e) => e.stopPropagation()
+      },
+        // Header
+        h('div', { className: 'sheet-header' },
+          h('div', { className: 'sheet-title', style: { display: 'flex', alignItems: 'center', gap: '8px' } },
+            h('span', null, '📅'),
+            h('div', null,
+              h('div', { style: { fontSize: '16px', fontWeight: 900 } }, dateInfo.formatted),
+              h('div', { style: { fontSize: '11.5px', color: 'var(--text-dim)', fontWeight: 600 } }, dateInfo.weekday)
+            )
+          ),
+          h('button', { type: 'button', className: 'sheet-close-btn', onClick: onClose }, '✕')
+        ),
+
+        // Date Financial Summary Banner (Dynamically calculated)
+        h('div', {
+          style: {
+            display: 'grid',
+            gridTemplateColumns: '1fr 1fr 1fr',
+            gap: '8px',
+            padding: '12px 10px',
+            background: 'rgba(255, 255, 255, 0.025)',
+            border: '1px solid var(--border-subtle)',
+            borderRadius: '10px',
+            margin: '12px 0 16px',
+            textAlign: 'center'
+          }
+        },
+          h('div', null,
+            h('div', { style: { fontSize: '10.5px', fontWeight: 800, color: 'var(--text-dim)', textTransform: 'uppercase' } }, 'Income'),
+            h('div', { style: { fontSize: '14px', fontWeight: 900, color: 'var(--income-green)', marginTop: '2px' } },
+              `+${formatCurrency(dateStats.income, currency)}`
+            )
+          ),
+          h('div', null,
+            h('div', { style: { fontSize: '10.5px', fontWeight: 800, color: 'var(--text-dim)', textTransform: 'uppercase' } }, 'Expenses'),
+            h('div', { style: { fontSize: '14px', fontWeight: 900, color: 'var(--expense-pink)', marginTop: '2px' } },
+              formatCurrency(dateStats.expenses, currency)
+            )
+          ),
+          h('div', null,
+            h('div', { style: { fontSize: '10.5px', fontWeight: 800, color: 'var(--text-dim)', textTransform: 'uppercase' } }, 'Net'),
+            h('div', {
+              style: {
+                fontSize: '14px',
+                fontWeight: 900,
+                marginTop: '2px',
+                color: dateStats.net > 0 ? 'var(--neon-green)' : dateStats.net < 0 ? 'var(--expense-pink)' : 'var(--text-muted)'
+              }
+            }, `${dateStats.net > 0 ? '+' : ''}${formatCurrency(dateStats.net, currency)}`)
+          )
+        ),
+
+        // Prominent Button: Add Transaction for this day
+        h('div', { style: { marginBottom: '14px' } },
+          h('button', {
+            type: 'button',
+            className: 'submit-btn',
+            style: {
+              width: '100%',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '8px',
+              padding: '11px',
+              fontSize: '13.5px',
+              fontWeight: 800
+            },
+            onClick: () => {
+              onClose();
+              onAddTxn();
+            }
+          }, `➕ Add Transaction for ${dateInfo.formatted}`)
+        ),
+
+        // Transactions Header
+        h('div', {
+          style: {
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            marginBottom: '10px',
+            paddingBottom: '6px',
+            borderBottom: '1px solid var(--border-subtle)'
+          }
+        },
+          h('span', { style: { fontSize: '12px', fontWeight: 800, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: '0.04em' } },
+            `Transactions (${dayTxns.length})`
+          ),
+          h('span', { style: { fontSize: '11px', color: 'var(--text-dim)' } }, 'Click any item or Edit to modify')
+        ),
+
+        // List of transactions for this day
+        dayTxns.length === 0
+          ? h('div', { className: 'empty-state', style: { padding: '24px 12px' } },
+              h('span', { className: 'empty-icon' }, '📅'),
+              h('div', { className: 'empty-title', style: { fontSize: '14px' } }, `No transactions on ${dateInfo.formatted}`),
+              h('div', { className: 'empty-desc', style: { fontSize: '12px' } }, 'Use the button above to log your spending or income for this day.')
+            )
+          : h('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } },
+              dayTxns.map((t) =>
+                h('div', {
+                  key: t.id,
+                  className: 'txn-card clickable',
+                  style: { margin: 0, padding: '12px', background: 'rgba(255, 255, 255, 0.03)' },
+                  onClick: () => {
+                    onClose();
+                    onEditTxn(t);
+                  }
+                },
+                  h('div', { className: 'txn-left' },
+                    h('div', { className: 'txn-cat-icon' }, t.categoryIcon || '📦'),
+                    h('div', { className: 'txn-details' },
+                      h('div', { className: 'txn-desc' }, t.description),
+                      h('div', { className: 'txn-meta' },
+                        h('span', { className: 'txn-pill' }, t.categoryName || 'Other'),
+                        h('span', { className: 'txn-pill' }, t.paymentMethod || 'UPI'),
+                        t.time ? h('span', { className: 'txn-pill' }, formatTimeAMPM(t.time)) : null,
+                        t.source === 'SMS'
+                          ? h('span', { className: 'source-badge sms' }, '📱 SMS' + (t.isEdited ? ' · Edited' : ''))
+                          : t.source === 'IMPORT'
+                          ? h('span', { className: 'source-badge import' }, '📥 Import')
+                          : t.isRecurring
+                          ? h('span', { className: 'source-badge recurring' }, '🔄 Auto')
+                          : h('span', { className: 'source-badge manual' }, '✏️ Manual')
+                      ),
+                      t.notes ? h('div', { style: { fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' } }, t.notes) : null
+                    )
+                  ),
+                  h('div', { className: 'txn-right', style: { display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '6px' } },
+                    h('div', { className: `txn-amount ${t.type.toLowerCase()}` },
+                      `${t.type === 'INCOME' ? '+' : '-'}${formatCurrency(t.amount, currency)}`
+                    ),
+                    h('div', { style: { display: 'flex', gap: '6px' } },
+                      h('button', {
+                        type: 'button',
+                        className: 'day-txn-action-btn edit',
+                        title: 'Edit this transaction',
+                        onClick: (e) => {
+                          e.stopPropagation();
+                          onClose();
+                          onEditTxn(t);
+                        }
+                      }, '✏️ Edit'),
+                      h('button', {
+                        type: 'button',
+                        className: 'day-txn-action-btn delete',
+                        title: 'Delete this transaction',
+                        onClick: (e) => {
+                          e.stopPropagation();
+                          onDeleteTxn(t);
+                        }
+                      }, '🗑️')
+                    )
+                  )
+                )
+              )
+            )
+      )
+    );
+  }
 
   // Add / Edit Transaction Modal Dialog (Requirements #4, #5, #6, #7, #14, #15, #16)
   function AddTxnModalDialog({ txn, defaultDate, categories, goals, paymentMethods, currency, onClose, onSave, onDelete }) {
