@@ -10,18 +10,15 @@ try {
 }
 
 $listener = New-Object System.Net.Sockets.TcpListener([System.Net.IPAddress]::Any, $port)
-$listener.Server.SetSocketOption([System.Net.Sockets.SocketOptionLevel]::Socket, [System.Net.Sockets.SocketOptionName]::ReuseAddress, $true)
 $listener.Start()
 
 Write-Host "==========================================================" -ForegroundColor Green
-Write-Host " Expense Tracker - Personal Finance (Phone & Desktop)" -ForegroundColor Cyan
+Write-Host " SpendFlow - Live Reload Server (Phone & Desktop)" -ForegroundColor Cyan
 Write-Host " PC Local:  http://localhost:$port/" -ForegroundColor Yellow
 Write-Host " On Phone:  http://$($localIP):$port/" -ForegroundColor Green
 Write-Host " Live Reload: ACTIVE (Changes auto-reflect on phone/PC)" -ForegroundColor Magenta
 Write-Host " Press Ctrl+C in this window to stop the server." -ForegroundColor Gray
 Write-Host "==========================================================" -ForegroundColor Green
-
-try { Start-Process "http://localhost:$port/" -ErrorAction SilentlyContinue } catch {}
 
 $mimeMap = @{
     ".html" = "text/html; charset=utf-8"
@@ -93,7 +90,6 @@ try {
         } catch {
             # Ignore client connection drops
         } finally {
-            try { $client.Client.Shutdown([System.Net.Sockets.SocketShutdown]::Both) } catch {}
             $client.Close()
         }
     }

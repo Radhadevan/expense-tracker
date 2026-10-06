@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    package="com.expensetracker.app">
+
+    <!-- Network Access for Supabase Cloud Database Sync -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <!-- 
+      GOOGLE PLAY SMS POLICY SAFETY DISCLOSURE:
+      
+      Core App Feature: Personal Finance Tracking & Automated Expense Logging.
+      These permissions are requested strictly to detect incoming bank/UPI debit and
+      credit transactional notifications and parse them into structured expense records.
+      
+      - RECEIVE_SMS: Used to detect newly received financial transaction alerts in real-time.
+      - READ_SMS: Used strictly upon explicit user request for "Import Previous Transactions".
+      
+      OTP messages, personal chat messages, verification codes and marketing coupons
+      are discarded immediately on-device. No raw SMS inbox is ever exported or uploaded.
+    -->
+    <uses-permission android:name="android.permission.RECEIVE_SMS" />
+    <uses-permission android:name="android.permission.READ_SMS" />
+
+    <application
+        android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
+        android:label="Expense Tracker"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.AppCompat.NoActionBar"
+        android:usesCleartextTraffic="true">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- 
+          Native Android Broadcast Receiver for incoming SMS messages.
+          Protected by android.permission.BROADCAST_SMS to ensure only the
+          system Telephony stack can dispatch broadcasts to this receiver.
+        -->
+        <receiver
+            android:name=".sms.SmsReceiver"
+            android:enabled="true"
+            android:exported="true"
+            android:permission="android.permission.BROADCAST_SMS">
+            <intent-filter android:priority="999">
+                <action android:name="android.provider.Telephony.SMS_RECEIVED" />
+            </intent-filter>
+        </receiver>
+
+    </application>
+
+</manifest>

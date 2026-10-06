@@ -1,17 +1,18 @@
-﻿{
-  name: SpendFlow - Daily Expense & Month-End PDF,
-  short_name: SpendFlow,
-  description: Daily Expense Calculator with Automated Month-End PDF Statements & Analytics,
-  start_url: ./index.html,
-  display: standalone,
-  background_color: #070c09,
-  theme_color: #00f59b,
-  icons: [
+{
+  "name": "Expense Tracker — Personal Finance",
+  "short_name": "Expense Tracker",
+  "description": "Standalone, Mobile-First Personal Finance Tracking Application with Offline Caching & Cloud Sync",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#070c09",
+  "theme_color": "#070c09",
+  "icons": [
     {
-      src: icon.svg,
-      sizes: 512x512,
-      type: image/svg+xml,
-      purpose: any maskable
+      "src": "icon.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
     }
   ]
 }

@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>SMS Transaction Parser — 10 Fixture Test Suite</title>
+  <style>
+    body { font-family: sans-serif; background: #070c09; color: #f0fdf4; padding: 24px; }
+    h1 { color: #00f59b; }
+    .test-case { background: #0e1612; border: 1px solid rgba(0,245,155,0.2); border-radius: 8px; padding: 12px; margin-bottom: 12px; }
+    .pass { border-left: 6px solid #00f59b; }
+    .fail { border-left: 6px solid #ef4444; }
+    .badge-pass { background: #00f59b; color: #070c09; font-weight: bold; padding: 2px 8px; border-radius: 4px; }
+    .badge-fail { background: #ef4444; color: #fff; font-weight: bold; padding: 2px 8px; border-radius: 4px; }
+    pre { background: #131f18; padding: 8px; border-radius: 4px; overflow-x: auto; font-size: 13px; }
+  </style>
+  <script src="sms-parser.js"></script>
+</head>
+<body>
+  <h1>🧪 SMS Transaction Parser Test Results</h1>
+  <div id="summary" style="margin-bottom: 20px; font-size: 18px; font-weight: bold;"></div>
+  <div id="results"></div>
+
+  <script>
+    const userFunds = [
+      { id: 'fund-rd', name: 'RD', targetAmount: 12000, currentAmount: 1000 },
+      { id: 'fund-weekly', name: 'Weekly Saving Fund', targetAmount: 1600, currentAmount: 1200 }
+    ];
+
+    const tests = [
+      {
+        id: 1,
+        sms: "Your A/c XX1234 is debited by Rs.500 at ABC PETROL PUMP via UPI.",
+        validate: (res) => {
+          return res.isFinancial === true &&
+                 res.type === 'EXPENSE' &&
+                 res.amount === 500 &&
+                 res.merchant === 'ABC Petrol Pump' &&
+                 res.categoryName === 'Petrol / Travel' &&
+                 res.paymentMethod === 'UPI' &&
+                 res.accountSuffix === 'XX1234';
+        },
+        desc: "EXPENSE ₹500, Petrol / Travel, UPI, ABC PETROL PUMP"
+      },
+      {
+        id: 2,
+        sms: "Rs.250 debited at ABC RESTAURANT.",
+        validate: (res) => {
+          return res.isFinancial === true &&
+                 res.type === 'EXPENSE' &&
+                 res.amount === 250 &&
+                 res.merchant === 'ABC Restaurant' &&
+                 res.categoryName === 'Food';
+        },
+        desc: "EXPENSE ₹250, Food, ABC RESTAURANT"
+      },
+      {
+        id: 3,
+        sms: "Salary of Rs.25,000 credited to A/c XX1234.",
+        validate: (res) => {
+          return res.isFinancial === true &&
+                 res.type === 'INCOME' &&
+                 res.amount === 25000 &&
+                 res.categoryName === 'Salary' &&
+                 res.accountSuffix === 'XX1234';
+        },
+        desc: "INCOME ₹25,000, Salary"
+      },
+      {
+        id: 4,
+        sms: "Rs.450 refund credited.",
+        validate: (res) => {
+          return res.isFinancial === true &&
+                 res.type === 'REFUND' &&
+                 res.amount === 450;
+        },
+        desc: "REFUND ₹450"
+      },
+      {
+        id: 5,
+        sms: "Your OTP is 829301.",
+        validate: (res) => {
+          return res.isFinancial === false && res.isIgnored === true;
+        },
+        desc: "IGNORE (OTP message)"
+      },
+      {
+        id: 6,
+        sms: "Use coupon SAVE500.",
+        validate: (res) => {
+          return res.isFinancial === false && res.isIgnored === true;
+        },
+        desc: "IGNORE (Coupon message)"
+      },
+      {
+        id: 7,
+        sms: "Your order will be delivered today.",
+        validate: (res) => {
+          return res.isFinancial === false && res.isIgnored === true;
+        },
+        desc: "IGNORE (Delivery update)"
+      },
+      {
+        id: 8,
+        sms: "Rs.1,000 transferred to RD.",
+        validate: (res) => {
+          return res.isFinancial === true &&
+                 res.type === 'FUND_CONTRIBUTION' &&
+                 res.amount === 1000 &&
+                 (res.fundTargetName === 'RD' || res.merchant.includes('RD'));
+        },
+        desc: "FUND CONTRIBUTION ₹1,000, RD"
+      },
+      {
+        id: 9,
+        sms: "UPI transfer of Rs.5,000 to own account.",
+        validate: (res) => {
+          return res.isFinancial === true &&
+                 res.type === 'TRANSFER' &&
+                 res.amount === 5000;
+        },
+        desc: "TRANSFER ₹5,000"
+      },
+      {
+        id: 10,
+        sms: "Same transaction SMS received twice.",
+        customRun: () => {
+          const smsText = "Your A/c XX1234 is debited by Rs.500 at ABC PETROL PUMP via UPI. Ref 987654321";
+          const res1 = SmsTransactionParser.parseSms(smsText, { userFunds });
+          const fakeExistingTxns = [{
+            amount: 500,
+            type: 'EXPENSE',
+            transactionReference: '987654321',
+            fingerprint: res1.fingerprint
+          }];
+          const res2 = SmsTransactionParser.parseSms(smsText, {
+            userFunds,
+            existingTransactions: fakeExistingTxns
+          });
+          return res2.isDuplicate === true;
+        },
+        desc: "ONE transaction only (duplicate rejected)"
+      }
+    ];
+
+    let passed = 0;
+    const container = document.getElementById('results');
+
+    tests.forEach((t) => {
+      let isPass = false;
+      let output = null;
+
+      try {
+        if (t.customRun) {
+          isPass = t.customRun();
+          output = { test10Result: isPass ? "Successfully identified as duplicate!" : "Failed to detect duplicate" };
+        } else {
+          output = SmsTransactionParser.parseSms(t.sms, { userFunds });
+          isPass = t.validate(output);
+        }
+      } catch (err) {
+        output = { error: err.message };
+        isPass = false;
+      }
+
+      if (isPass) passed++;
+
+      const div = document.createElement('div');
+      div.className = `test-case ${isPass ? 'pass' : 'fail'}`;
+      div.innerHTML = `
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <strong>Fixture #${t.id}: ${t.desc}</strong>
+          <span class="${isPass ? 'badge-pass' : 'badge-fail'}">${isPass ? 'PASSED' : 'FAILED'}</span>
+        </div>
+        <div style="font-size:13px; color:#8ea598; margin:6px 0;">SMS: "${t.sms}"</div>
+        <pre>${JSON.stringify(output, null, 2)}</pre>
+      `;
+      container.appendChild(div);
+    });
+
+    const summary = document.getElementById('summary');
+    summary.innerHTML = passed === tests.length
+      ? `<span style="color:#00f59b">✅ ALL ${passed} / ${tests.length} TEST FIXTURES PASSED!</span>`
+      : `<span style="color:#ef4444">❌ ${tests.length - passed} / ${tests.length} TESTS FAILED</span>`;
+
+    window.testResults = { total: tests.length, passed, allPassed: passed === tests.length };
+  </script>
+</body>
+</html>
