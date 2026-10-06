@@ -1,11 +1,11 @@
-const CACHE_NAME = 'exptrk-v1.0';
+const CACHE_NAME = 'exptrk-v3.0';
 const ASSETS = [
   './',
   './index.html',
-  './style.css',
-  './sms-parser.js',
-  './sms-bridge.js',
-  './app.js',
+  './style.css?v=3.0',
+  './sms-parser.js?v=3.0',
+  './sms-bridge.js?v=3.0',
+  './app.js?v=3.0',
   './manifest.json',
   './icon.svg',
   'https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap',
@@ -30,7 +30,10 @@ self.addEventListener('activate', (event) => {
     caches.keys().then((keys) => {
       return Promise.all(
         keys.map((key) => {
-          if (key !== CACHE_NAME) return caches.delete(key);
+          if (key !== CACHE_NAME) {
+            console.log('[SW] Pruning old cache:', key);
+            return caches.delete(key);
+          }
         })
       );
     })
@@ -39,15 +42,18 @@ self.addEventListener('activate', (event) => {
 });
 
 self.addEventListener('fetch', (event) => {
-  if (event.request.url.includes('/live-reload-check')) {
-    event.respondWith(fetch(event.request));
-    return;
+  const url = event.request.url;
+
+  // NEVER cache API endpoints or live-reload checker
+  if (url.includes('/api/') || url.includes('/live-reload-check') || event.request.method !== 'GET') {
+    return; // Normal network handling
   }
 
+  // Network-First strategy: Always fetch freshest assets first; fallback to offline cache if offline
   event.respondWith(
     fetch(event.request)
       .then((networkResponse) => {
-        if (networkResponse && networkResponse.status === 200 && event.request.method === 'GET') {
+        if (networkResponse && networkResponse.status === 200) {
           const responseClone = networkResponse.clone();
           caches.open(CACHE_NAME).then((cache) => {
             cache.put(event.request, responseClone);

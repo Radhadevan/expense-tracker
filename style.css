@@ -251,6 +251,29 @@ body {
   box-shadow: 0 0 8px var(--warning-amber);
 }
 
+.sync-status-badge.live-sync-btn {
+  cursor: pointer;
+  background: rgba(0, 245, 155, 0.08);
+  border-color: rgba(0, 245, 155, 0.25);
+  color: var(--neon-green);
+  transition: all 0.2s ease;
+  font-family: inherit;
+  outline: none;
+}
+
+.sync-status-badge.live-sync-btn:hover,
+.sync-status-badge.live-sync-btn:active {
+  background: rgba(0, 245, 155, 0.16);
+  border-color: var(--neon-green);
+  transform: translateY(-1px);
+}
+
+.sync-status-badge.live-sync-btn.offline-state {
+  background: rgba(245, 158, 11, 0.08);
+  border-color: rgba(245, 158, 11, 0.25);
+  color: var(--warning-amber);
+}
+
 /* ==============================================================================
    BOTTOM NAVIGATION BAR (MOBILE-FIRST)
    ============================================================================== */

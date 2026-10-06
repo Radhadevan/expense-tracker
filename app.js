@@ -799,6 +799,14 @@
     const [isOnline, setIsOnline] = useState(navigator.onLine);
     const [syncStatus, setSyncStatus] = useState('IDLE'); // 'IDLE', 'SYNCING', 'ERROR'
 
+    // Live Cross-Device Sync State (Real-time updates across Phone & PC)
+    const [liveSyncConnected, setLiveSyncConnected] = useState(false);
+    const [lastSyncTime, setLastSyncTime] = useState(null);
+    const isApplyingIncomingSyncRef = useRef(false);
+    const lastSyncedTicksRef = useRef(0);
+    const pushTimeoutRef = useRef(null);
+    const isInitialMountRef = useRef(true);
+
     // Filter states on Transactions Page
     const [txnSearch, setTxnSearch] = useState('');
     const [txnTypeFilter, setTxnTypeFilter] = useState('ALL');
@@ -863,6 +871,169 @@
     useEffect(() => {
       localStorage.setItem(STORAGE_KEYS.SUPABASE_CONFIG, JSON.stringify(supabaseConfig));
     }, [supabaseConfig]);
+
+    // --- LIVE CROSS-DEVICE SYNC ENGINE (Instant Phone & Desktop Sync) ---
+    const pushCurrentStateToServer = useCallback(() => {
+      if (isApplyingIncomingSyncRef.current) return;
+
+      const payload = {
+        timestamp: Date.now(),
+        profile,
+        transactions,
+        categories,
+        goals,
+        contributions,
+        monthlyBudgetLimit,
+        categoryBudgets,
+        recurringPayments,
+        accounts,
+        appLock: { enabled: appLock.enabled, pin: appLock.pin }
+      };
+
+      fetch('/api/sync-data', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      })
+        .then((r) => r.json())
+        .then((res) => {
+          if (res && res.status === 'ok') {
+            lastSyncedTicksRef.current = res.timestamp || Date.now();
+            setLiveSyncConnected(true);
+            setLastSyncTime(new Date());
+          }
+        })
+        .catch(() => {
+          setLiveSyncConnected(false);
+        });
+    }, [profile, transactions, categories, goals, contributions, monthlyBudgetLimit, categoryBudgets, recurringPayments, accounts, appLock]);
+
+    const checkRemoteUpdates = useCallback(async () => {
+      if (isApplyingIncomingSyncRef.current) return;
+      try {
+        const res = await fetch('/api/sync-meta?_t=' + Date.now(), { cache: 'no-store' });
+        if (!res.ok) {
+          setLiveSyncConnected(false);
+          return;
+        }
+        const meta = await res.json();
+        setLiveSyncConnected(true);
+
+        if (meta && meta.timestamp && meta.timestamp > lastSyncedTicksRef.current) {
+          const dataRes = await fetch('/api/sync-data?_t=' + Date.now(), { cache: 'no-store' });
+          if (!dataRes.ok) return;
+          const data = await dataRes.json();
+
+          if (data && data.transactions && Array.isArray(data.transactions)) {
+            isApplyingIncomingSyncRef.current = true;
+            if (data.transactions) setTransactions(data.transactions);
+            if (data.goals) setGoals(data.goals);
+            if (data.contributions) setContributions(data.contributions);
+            if (data.monthlyBudgetLimit !== undefined) setMonthlyBudgetLimit(data.monthlyBudgetLimit);
+            if (data.categoryBudgets) setCategoryBudgets(data.categoryBudgets);
+            if (data.recurringPayments) setRecurringPayments(data.recurringPayments);
+            if (data.accounts) setAccounts(data.accounts);
+            if (data.categories) setCategories(data.categories);
+            if (data.profile) setProfile(data.profile);
+
+            lastSyncedTicksRef.current = meta.timestamp;
+            setLastSyncTime(new Date());
+            setTimeout(() => {
+              isApplyingIncomingSyncRef.current = false;
+            }, 300);
+          }
+        }
+      } catch (err) {
+        setLiveSyncConnected(false);
+      }
+    }, []);
+
+    // Initial mount hydration: sync shared store from server
+    useEffect(() => {
+      let isMounted = true;
+      async function initialSync() {
+        try {
+          const res = await fetch('/api/sync-data?_t=' + Date.now(), { cache: 'no-store' });
+          if (!res.ok) return;
+          const data = await res.json();
+          if (!isMounted) return;
+
+          if (data && data.transactions && Array.isArray(data.transactions) && data.transactions.length > 0) {
+            isApplyingIncomingSyncRef.current = true;
+            if (data.transactions) setTransactions(data.transactions);
+            if (data.goals) setGoals(data.goals);
+            if (data.contributions) setContributions(data.contributions);
+            if (data.monthlyBudgetLimit !== undefined) setMonthlyBudgetLimit(data.monthlyBudgetLimit);
+            if (data.categoryBudgets) setCategoryBudgets(data.categoryBudgets);
+            if (data.recurringPayments) setRecurringPayments(data.recurringPayments);
+            if (data.accounts) setAccounts(data.accounts);
+            if (data.categories) setCategories(data.categories);
+            if (data.profile) setProfile(data.profile);
+
+            lastSyncedTicksRef.current = data.timestamp || Date.now();
+            setLiveSyncConnected(true);
+            setLastSyncTime(new Date());
+            setTimeout(() => {
+              isApplyingIncomingSyncRef.current = false;
+            }, 300);
+          } else if (data && data.empty) {
+            pushCurrentStateToServer();
+          }
+        } catch (err) {
+          setLiveSyncConnected(false);
+        }
+      }
+      initialSync();
+      return () => { isMounted = false; };
+    }, []);
+
+    // Auto-push any local modifications to the shared server (debounced 350ms)
+    useEffect(() => {
+      if (isInitialMountRef.current) {
+        isInitialMountRef.current = false;
+        return;
+      }
+      if (isApplyingIncomingSyncRef.current) return;
+
+      if (pushTimeoutRef.current) clearTimeout(pushTimeoutRef.current);
+      pushTimeoutRef.current = setTimeout(() => {
+        pushCurrentStateToServer();
+      }, 350);
+
+      return () => {
+        if (pushTimeoutRef.current) clearTimeout(pushTimeoutRef.current);
+      };
+    }, [
+      profile,
+      transactions,
+      categories,
+      goals,
+      contributions,
+      monthlyBudgetLimit,
+      categoryBudgets,
+      recurringPayments,
+      accounts,
+      appLock,
+      pushCurrentStateToServer
+    ]);
+
+    // Live poller: checks for external changes every 1.8s + on mobile screen unlock / app focus
+    useEffect(() => {
+      const interval = setInterval(checkRemoteUpdates, 1800);
+      const onFocus = () => checkRemoteUpdates();
+      const onVisibility = () => {
+        if (!document.hidden) checkRemoteUpdates();
+      };
+
+      window.addEventListener('focus', onFocus);
+      document.addEventListener('visibilitychange', onVisibility);
+
+      return () => {
+        clearInterval(interval);
+        window.removeEventListener('focus', onFocus);
+        document.removeEventListener('visibilitychange', onVisibility);
+      };
+    }, [checkRemoteUpdates]);
 
     // AUTO-ADD RECURRING TRANSACTIONS ENGINE (Requirement #3)
     useEffect(() => {
@@ -2583,14 +2754,14 @@
 
         // Settings Menu
         h('div', { className: 'settings-hub-grid' },
-          // Clean DATA & SYNC (Replaces raw Supabase UI - Requirement #7)
+          // Clean DATA & SYNC (Requirement #7)
           h('div', { className: 'settings-row', onClick: () => setIsDataSyncOpen(true) },
             h('div', { className: 'settings-row-left' },
               h('span', { className: 'settings-icon' }, '☁️'),
               h('div', null,
-                h('div', { className: 'settings-label' }, 'Data & Cloud Sync'),
+                h('div', { className: 'settings-label' }, 'Data & Live Sync'),
                 h('div', { className: 'settings-sub' },
-                  supabaseConfig.isConnected ? 'Cloud backup enabled · Synchronized' : 'Local only (100% Offline & Private)'
+                  liveSyncConnected ? '🟢 Live Sync Active (Phone & PC connected)' : 'Local storage (Tap to sync)'
                 )
               )
             ),
@@ -2942,6 +3113,12 @@
 
       return h(DataSyncModalDialog, {
         config: supabaseConfig,
+        liveSyncConnected,
+        onForceSync: () => {
+          checkRemoteUpdates();
+          pushCurrentStateToServer();
+          showToast('🟢 Synchronizing with other devices...');
+        },
         onClose: () => setIsDataSyncOpen(false),
         onSave: (newConfig) => {
           setSupabaseConfig(newConfig);
@@ -3055,20 +3232,38 @@
           }, 'Today')
         ),
 
-        // Header Right: OFFLINE / SYNC INDICATOR (Requirement #9)
-        // Hidden when normally operating online! Only displayed on offline or sync alert.
+        // Header Right: LIVE SYNC & OFFLINE INDICATOR
         h('div', { className: 'header-right' },
-          !isOnline
+          liveSyncConnected
+            ? h('button', {
+                type: 'button',
+                className: 'sync-status-badge live-sync-btn',
+                title: 'Live Cross-Device Sync: Active. Tap to sync now.',
+                onClick: () => {
+                  checkRemoteUpdates();
+                  showToast('🟢 Live Synced with Server & Devices');
+                }
+              },
+                h('span', { className: 'sync-dot' }),
+                'Live Synced'
+              )
+            : !isOnline
             ? h('div', { className: 'sync-status-badge', style: { color: 'var(--warning-amber)' } },
                 h('span', { className: 'sync-dot offline' }),
                 'Offline'
               )
-            : syncStatus === 'SYNCING'
-            ? h('div', { className: 'sync-status-badge' },
-                h('span', { className: 'sync-dot' }),
-                'Syncing...'
+            : h('button', {
+                type: 'button',
+                className: 'sync-status-badge live-sync-btn offline-state',
+                title: 'Tap to connect to live sync server',
+                onClick: () => {
+                  checkRemoteUpdates();
+                  showToast('Checking sync connection...');
+                }
+              },
+                h('span', { className: 'sync-dot offline' }),
+                'Local Only'
               )
-            : null
         )
       ),
 
@@ -3926,7 +4121,7 @@
   }
 
   // Clean Data & Cloud Sync Modal Dialog (Requirement #7)
-  function DataSyncModalDialog({ config, onClose, onSave }) {
+  function DataSyncModalDialog({ config, liveSyncConnected, onForceSync, onClose, onSave }) {
     const [showAdvanced, setShowAdvanced] = useState(false);
     const [url, setUrl] = useState(config.url || '');
     const [anonKey, setAnonKey] = useState(config.anonKey || '');
@@ -3945,22 +4140,22 @@
         h('div', { className: 'sheet-header' },
           h('div', { className: 'sheet-title' },
             h('span', null, '☁️'),
-            ' Data & Cloud Sync'
+            ' Data & Live Sync'
           ),
           h('button', { type: 'button', className: 'sheet-close-btn', onClick: onClose }, '✕')
         ),
 
         h('div', { className: 'stat-widget', style: { marginBottom: '16px' } },
           h('div', { style: { display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '6px' } },
-            h('span', { className: `sync-dot ${config.isConnected ? '' : 'offline'}` }),
+            h('span', { className: `sync-dot ${liveSyncConnected ? '' : 'offline'}` }),
             h('strong', { style: { color: '#fff', fontSize: '14px' } },
-              config.isConnected ? 'Cloud Backup Enabled' : 'Local Only Mode (100% Private)'
+              liveSyncConnected ? 'Live Multi-Device Sync Active 🟢' : 'Local Storage Mode'
             )
           ),
           h('div', { style: { fontSize: '12.5px', color: 'var(--text-muted)', lineHeight: 1.5 } },
-            config.isConnected
-              ? 'Your financial entries are encrypted and mirrored to your private cloud storage with Row Level Security.'
-              : 'All your finances are kept securely on this device inside offline browser storage. Zero tracking.'
+            liveSyncConnected
+              ? 'Changes made on mobile or desktop are automatically updated in real-time.'
+              : 'App is running standalone in browser storage. Connect via http://10.216.40.100:3000 to enable real-time phone sync.'
           )
         ),
 
@@ -3969,9 +4164,10 @@
           className: 'submit-btn',
           style: { width: '100%', marginBottom: '14px' },
           onClick: () => {
-            alert('Local data checked and verified. Synchronized with browser cache!');
+            if (onForceSync) onForceSync();
+            onClose();
           }
-        }, '⚡ Sync Local Data Now'),
+        }, '⚡ Force Live Sync Now'),
 
         // Advanced Settings Expandable
         h('div', { style: { borderTop: '1px solid var(--border-subtle)', paddingTop: '12px' } },
