@@ -58,18 +58,26 @@
   -webkit-tap-highlight-color: transparent;
 }
 
+html, body {
+  overflow-x: hidden;
+  max-width: 100vw;
+  width: 100%;
+}
+
 body {
   background-color: var(--bg-deep);
   color: var(--text-main);
   font-family: var(--font-family);
   min-height: 100vh;
+  min-height: -webkit-fill-available;
   line-height: 1.5;
   background-image: 
     radial-gradient(circle at 10% 8%, rgba(0, 245, 155, 0.08) 0%, transparent 40%),
     radial-gradient(circle at 90% 85%, rgba(16, 185, 129, 0.06) 0%, transparent 45%);
   background-attachment: fixed;
   -webkit-font-smoothing: antialiased;
-  padding-bottom: 90px; /* Space for Mobile Bottom Nav */
+  padding-bottom: max(95px, calc(78px + env(safe-area-inset-bottom)));
+  padding-top: env(safe-area-inset-top);
 }
 
 /* Base Container */
@@ -78,6 +86,7 @@ body {
   margin: 0 auto;
   padding: 16px;
   position: relative;
+  overflow-x: hidden;
 }
 
 /* ==============================================================================
@@ -1526,26 +1535,419 @@ body {
   margin: 0 auto;
 }
 
-/* Responsive Overrides */
+/* ==============================================================================
+   COMPREHENSIVE MOBILE-FIRST RESPONSIVE DESIGN SYSTEM (< 640px)
+   ============================================================================== */
 @media (max-width: 640px) {
-  .tri-card-grid {
-    grid-template-columns: 1fr;
-    gap: 8px;
+  /* Layout & Container */
+  .app-container {
+    padding: 10px 12px;
   }
+
+  /* Sticky Top Header (2 Clean Mobile Rows) */
+  .app-header {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    grid-template-areas:
+      "left right"
+      "month month";
+    gap: 10px;
+    padding: 12px 14px;
+    margin-bottom: 16px;
+    border-radius: var(--radius-md);
+    top: max(6px, env(safe-area-inset-top));
+  }
+
+  .header-left {
+    grid-area: left;
+    min-width: 0;
+    gap: 10px;
+  }
+
+  .logo-badge {
+    width: 38px;
+    height: 38px;
+    font-size: 18px;
+    border-radius: 12px;
+    flex-shrink: 0;
+  }
+
+  .brand-info h1 {
+    font-size: 17px;
+  }
+
+  .brand-tagline {
+    display: none; /* Hide micro tagline on mobile to keep header clean */
+  }
+
+  .header-greeting {
+    font-size: 11.5px;
+    margin-top: 1px;
+  }
+
+  .header-right {
+    grid-area: right;
+    align-self: center;
+  }
+
+  .sync-status-badge {
+    padding: 5px 10px;
+    font-size: 10.5px;
+  }
+
+  .month-selector {
+    grid-area: month;
+    width: 100%;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 3px 6px;
+  }
+
+  .current-month-label {
+    flex: 1;
+    text-align: center;
+    min-width: 0;
+    font-size: 13px;
+  }
+
+  .month-nav-btn {
+    width: 32px;
+    height: 32px;
+    font-size: 16px;
+  }
+
+  .today-jump-btn {
+    padding: 4px 10px;
+    font-size: 11px;
+  }
+
+  /* Home Overview Cards */
+  .balance-card {
+    padding: 18px 16px;
+    margin-bottom: 14px;
+    border-radius: var(--radius-md);
+  }
+
+  .balance-label {
+    font-size: 11px;
+  }
+
+  .savings-badge {
+    font-size: 11px;
+    padding: 3px 9px;
+  }
+
   .balance-amount {
-    font-size: 34px;
+    font-size: 32px;
+    margin-bottom: 4px;
   }
+
+  .balance-sub {
+    font-size: 12px;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+
+  /* 3 Compact KPI Cards Side-by-Side in 1 Sleek Row */
+  .tri-card-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 6px;
+    margin-bottom: 14px;
+  }
+
+  .mini-kpi-card {
+    padding: 10px 6px;
+    border-radius: var(--radius-sm);
+    text-align: center;
+    min-width: 0;
+  }
+
+  .mini-kpi-label {
+    font-size: 9px;
+    letter-spacing: 0.04em;
+    margin-bottom: 2px;
+  }
+
+  .mini-kpi-value {
+    font-size: 14px;
+    letter-spacing: -0.02em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* Dual Stat Grid (Today Spend & Monthly Budget) */
   .dual-stat-grid {
-    grid-template-columns: 1fr;
-  }
-  .budget-hero-stats {
     grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    margin-bottom: 16px;
   }
-  .report-grid-2 {
-    grid-template-columns: 1fr;
+
+  .stat-widget {
+    padding: 12px 10px;
+    border-radius: var(--radius-sm);
   }
+
+  .widget-label {
+    font-size: 10px;
+  }
+
+  .widget-value {
+    font-size: 17px;
+  }
+
+  .widget-sub {
+    font-size: 10.5px;
+  }
+
+  /* Prominent Add Action */
+  .prominent-add-btn {
+    padding: 13px 16px;
+    font-size: 14px;
+    border-radius: var(--radius-md);
+    margin: 10px 0 16px;
+  }
+
+  /* Donut Spending Chart */
+  .donut-section-card {
+    padding: 16px;
+    margin-bottom: 18px;
+    border-radius: var(--radius-md);
+  }
+
   .donut-layout {
     flex-direction: column;
+    align-items: center;
+    gap: 16px;
+  }
+
+  .donut-legend-list {
+    width: 100%;
+  }
+
+  /* Transaction Items */
+  .txn-card {
+    padding: 12px 12px;
+    border-radius: var(--radius-sm);
+    gap: 8px;
+  }
+
+  .txn-left {
+    min-width: 0;
+    flex: 1;
+    gap: 10px;
+  }
+
+  .txn-cat-icon {
+    width: 36px;
+    height: 36px;
+    font-size: 18px;
+    border-radius: 10px;
+  }
+
+  .txn-details {
+    min-width: 0;
+    flex: 1;
+  }
+
+  .txn-desc {
+    font-size: 13.5px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 160px;
+  }
+
+  .txn-meta {
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+
+  .txn-pill {
+    font-size: 9.5px;
+    padding: 2px 6px;
+  }
+
+  .txn-right {
+    flex-shrink: 0;
+    text-align: right;
+  }
+
+  .txn-amount {
+    font-size: 15px;
+  }
+
+  .txn-date-time {
+    font-size: 10px;
+  }
+
+  .txn-actions-row {
+    gap: 4px;
+    margin-top: 4px;
+  }
+
+  .mini-action-btn {
+    font-size: 11px;
+    padding: 3px 5px;
+  }
+
+  /* Filters & Search */
+  .filter-bar {
+    gap: 6px;
+    margin-bottom: 14px;
+  }
+
+  .search-input-wrap {
+    min-width: 100%;
+    flex: 1 1 100%;
+  }
+
+  .filter-select {
+    flex: 1 1 calc(50% - 4px);
+    font-size: 11.5px;
+    padding: 8px 10px;
+  }
+
+  /* Funds & Budgets */
+  .funds-grid {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  .fund-card {
+    padding: 16px;
+    border-radius: var(--radius-md);
+  }
+
+  .budget-hero-stats {
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+
+  .category-budgets-grid {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  .fixed-payment-card {
+    padding: 14px 12px;
+    border-radius: var(--radius-sm);
+    gap: 10px;
+  }
+
+  /* Reports View */
+  .report-grid-2 {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  .report-table-card {
+    padding: 12px;
+    border-radius: var(--radius-sm);
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .report-table th, .report-table td {
+    padding: 8px 10px;
+    font-size: 12px;
+    white-space: nowrap;
+  }
+
+  /* Bottom Sheets & Modals */
+  .bottom-sheet-card {
+    border-radius: 22px 22px 0 0;
+    padding: 18px 16px max(24px, env(safe-area-inset-bottom));
+    max-height: 88vh;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .sheet-title {
+    font-size: 16px;
+  }
+
+  .form-input, .form-select, .form-textarea {
+    font-size: 16px; /* Prevents unwanted iOS Safari page zoom */
+    padding: 10px 12px;
+    border-radius: var(--radius-sm);
+  }
+
+  .type-segmented-control {
+    margin-bottom: 14px;
+  }
+
+  .type-tab-btn {
+    font-size: 10.5px;
+    padding: 6px 2px;
+  }
+
+  .sheet-actions {
+    margin-top: 18px;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .sheet-actions .cancel-btn {
+    flex: 1 1 calc(50% - 6px);
+    padding: 12px 14px;
+    font-size: 13px;
+  }
+
+  .sheet-actions .submit-btn {
+    flex: 1 1 100%;
+    padding: 12px 14px;
+    font-size: 14px;
+  }
+
+  /* Bottom Navigation (Safe on All Phones) */
+  .bottom-nav {
+    padding: 4px 2px max(6px, env(safe-area-inset-bottom));
+    height: auto;
+  }
+
+  .nav-item {
+    padding: 5px 2px;
+    max-width: none;
+    flex: 1 1 16.6%;
+    gap: 2px;
+  }
+
+  .nav-icon {
+    font-size: 18px;
+  }
+
+  .nav-label {
+    font-size: 9px;
+    letter-spacing: 0;
+  }
+
+  /* Toast Messages */
+  .toast-msg {
+    bottom: max(78px, calc(68px + env(safe-area-inset-bottom)));
+    left: 14px;
+    right: 14px;
+    text-align: center;
+    border-radius: var(--radius-sm);
+    padding: 10px 16px;
+    font-size: 12.5px;
+  }
+}
+
+/* Extra Compact Phones (< 360px: iPhone SE, compact Android) */
+@media (max-width: 360px) {
+  .balance-amount {
+    font-size: 27px;
+  }
+  .mini-kpi-value {
+    font-size: 12.5px;
+  }
+  .nav-label {
+    font-size: 8px;
+  }
+  .type-tab-btn {
+    font-size: 9px;
   }
 }
 
