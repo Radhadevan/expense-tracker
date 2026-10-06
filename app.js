@@ -7,7 +7,7 @@
 (function () {
   'use strict';
 
-  const { useState, useEffect, useMemo, useCallback } = React;
+  const { useState, useEffect, useMemo, useCallback, useRef } = React;
   const h = React.createElement;
 
   // --- STORAGE KEYS ---
@@ -87,7 +87,8 @@
       time: '09:00',
       paymentMethod: 'Bank',
       description: 'Salary',
-      notes: 'Monthly employer credit'
+      notes: 'Monthly employer credit',
+      source: 'MANUAL'
     },
     {
       id: 'txn-2',
@@ -101,7 +102,8 @@
       time: '10:30',
       paymentMethod: 'Bank',
       description: 'Bike EMI',
-      notes: 'Monthly EMI installment'
+      notes: 'Monthly EMI installment',
+      source: 'MANUAL'
     },
     {
       id: 'txn-3',
@@ -115,7 +117,8 @@
       time: '11:00',
       paymentMethod: 'UPI',
       description: 'Rent',
-      notes: 'Apartment rent transfer'
+      notes: 'Apartment rent transfer',
+      source: 'MANUAL'
     },
     {
       id: 'txn-4',
@@ -129,7 +132,8 @@
       time: '07:15',
       paymentMethod: 'UPI',
       description: 'Gym',
-      notes: 'Monthly gym subscription pass'
+      notes: 'Monthly gym subscription pass',
+      source: 'MANUAL'
     },
     {
       id: 'txn-5',
@@ -143,7 +147,8 @@
       time: '14:00',
       paymentMethod: 'UPI',
       description: 'Dining & Groceries',
-      notes: 'Weekly groceries and dinner'
+      notes: 'Weekly groceries and dinner',
+      source: 'MANUAL'
     },
     {
       id: 'txn-6',
@@ -157,7 +162,8 @@
       time: '12:45',
       paymentMethod: 'UPI',
       description: 'Petrol',
-      notes: 'Fuel fill-up at Shell'
+      notes: 'Fuel fill-up at Shell',
+      source: 'SMS'
     },
     {
       id: 'txn-7',
@@ -171,7 +177,8 @@
       time: '19:15',
       paymentMethod: 'Cash',
       description: 'Alfaham + Tea',
-      notes: 'Dinner with friends'
+      notes: 'Dinner with friends',
+      source: 'SMS'
     },
     {
       id: 'txn-8',
@@ -185,7 +192,8 @@
       time: '08:30',
       paymentMethod: 'UPI',
       description: 'Puttu with Egg Curry',
-      notes: 'Breakfast'
+      notes: 'Breakfast',
+      source: 'MANUAL'
     }
   ];
 
@@ -355,6 +363,72 @@
       });
     } else {
       window.print();
+    }
+  }
+
+  // --- TIME & FULL DATE DISPLAY HELPERS ---
+  function formatTimeAMPM(timeStr) {
+    if (!timeStr) return '';
+    const parts = timeStr.split(':');
+    if (parts.length < 2) return timeStr;
+    let hr = parseInt(parts[0], 10);
+    const min = parts[1];
+    const ampm = hr >= 12 ? 'PM' : 'AM';
+    hr = hr % 12;
+    hr = hr ? hr : 12;
+    return `${hr}:${min} ${ampm}`;
+  }
+
+  function formatFullDate(dateStr) {
+    if (!dateStr) return { formatted: '', weekday: '', shortFormatted: '' };
+    const parts = dateStr.split('-');
+    if (parts.length !== 3) return { formatted: dateStr, weekday: '', shortFormatted: dateStr };
+    const [y, m, d] = parts.map(Number);
+    const dt = new Date(y, m - 1, d);
+    const dayName = dt.toLocaleDateString('en-US', { weekday: 'long' });
+    const monthName = getMonthName(m - 1);
+    return {
+      formatted: `${pad(d)} ${monthName} ${y}`,
+      weekday: dayName,
+      shortFormatted: `${monthName} ${d}, ${y}`
+    };
+  }
+
+  // --- SUPABASE TRANSACTION SYNC HELPER (Requirement #13) ---
+  async function syncTransactionToSupabase(action, txn, config) {
+    if (!config || !config.isConnected || !config.url || !config.anonKey || typeof window === 'undefined' || !window.supabase) {
+      return;
+    }
+    try {
+      const client = window.supabase.createClient(config.url, config.anonKey);
+      if (action === 'INSERT') {
+        await client.from('transactions').insert([{
+          id: txn.id,
+          type: txn.type,
+          amount: txn.amount,
+          date: txn.date,
+          time: txn.time || '12:00',
+          description: txn.description,
+          notes: txn.notes || '',
+          is_recurring: Boolean(txn.isRecurring),
+          source: txn.source || 'MANUAL'
+        }]);
+      } else if (action === 'UPDATE') {
+        await client.from('transactions').update({
+          type: txn.type,
+          amount: txn.amount,
+          date: txn.date,
+          time: txn.time || '12:00',
+          description: txn.description,
+          notes: txn.notes || '',
+          is_recurring: Boolean(txn.isRecurring),
+          updated_at: new Date().toISOString()
+        }).eq('id', txn.id);
+      } else if (action === 'DELETE') {
+        await client.from('transactions').delete().eq('id', txn.id);
+      }
+    } catch (err) {
+      console.warn('[Supabase Sync Error]', err);
     }
   }
 
@@ -668,9 +742,39 @@
     });
 
     // Navigation & Viewing State (FUNDS renamed to GOALS)
-    const [activeTab, setActiveTab] = useState('HOME');
+    const [activeTab, setActiveTab] = useState(() => {
+      if (typeof window !== 'undefined' && window.location.hash) {
+        const h = window.location.hash.replace('#', '').toUpperCase();
+        if (['HOME', 'TRANSACTIONS', 'GOALS', 'BUDGET', 'REPORTS', 'MORE', 'FIXED_PAYMENTS'].includes(h)) {
+          return h;
+        }
+      }
+      return 'HOME';
+    });
     const [viewYear, setViewYear] = useState(currentYear);
     const [viewMonth, setViewMonth] = useState(currentMonthNum); // 1-indexed
+
+    useEffect(() => {
+      const handleHashChange = () => {
+        if (window.location.hash) {
+          const h = window.location.hash.replace('#', '').toUpperCase();
+          if (['HOME', 'TRANSACTIONS', 'GOALS', 'BUDGET', 'REPORTS', 'MORE', 'FIXED_PAYMENTS'].includes(h)) {
+            setActiveTab(h);
+          }
+        }
+      };
+      window.addEventListener('hashchange', handleHashChange);
+      return () => window.removeEventListener('hashchange', handleHashChange);
+    }, []);
+
+    // Calendar & Date Selection States (Requirements #1 - #12)
+    const [calYear, setCalYear] = useState(currentYear);
+    const [calMonth, setCalMonth] = useState(currentMonthNum);
+    const [selectedDate, setSelectedDate] = useState(() => {
+      return `${currentYear}-${currentMonthStr}-${pad(now.getDate())}`;
+    });
+    const [dateFilterMode, setDateFilterMode] = useState('CALENDAR'); // 'CALENDAR', 'TODAY', 'YESTERDAY', 'THIS_WEEK', 'THIS_MONTH', 'ALL'
+    const touchStartRef = useRef(0);
 
     // Modals & UI States
     const [isAddTxnOpen, setIsAddTxnOpen] = useState(false);
@@ -829,6 +933,192 @@
       setViewMonth(currentMonthNum);
     };
 
+    // Calendar Month Navigation Handlers (Requirements #1 & #8)
+    const handleCalPrevMonth = () => {
+      if (calMonth === 1) {
+        setCalMonth(12);
+        setCalYear((y) => y - 1);
+      } else {
+        setCalMonth((m) => m - 1);
+      }
+    };
+
+    const handleCalNextMonth = () => {
+      if (calMonth === 12) {
+        setCalMonth(1);
+        setCalYear((y) => y + 1);
+      } else {
+        setCalMonth((m) => m + 1);
+      }
+    };
+
+    const handleCalJumpToday = () => {
+      const todayDateStr = `${currentYear}-${currentMonthStr}-${pad(now.getDate())}`;
+      setCalYear(currentYear);
+      setCalMonth(currentMonthNum);
+      setSelectedDate(todayDateStr);
+      setDateFilterMode('CALENDAR');
+    };
+
+    // Touch Swipe Navigation for Calendar (Requirement #11)
+    const handleTouchStart = (e) => {
+      if (e.touches && e.touches[0]) {
+        touchStartRef.current = e.touches[0].clientX;
+      }
+    };
+
+    const handleTouchEnd = (e) => {
+      if (e.changedTouches && e.changedTouches[0]) {
+        const deltaX = e.changedTouches[0].clientX - touchStartRef.current;
+        if (deltaX > 45) {
+          handleCalPrevMonth();
+        } else if (deltaX < -45) {
+          handleCalNextMonth();
+        }
+      }
+    };
+
+    // Dynamic indicators for every date: Green = income, Red = expense, Both = green + red dots (Requirement #10)
+    const dateIndicators = useMemo(() => {
+      const map = {};
+      transactions.forEach((t) => {
+        if (!t.date) return;
+        if (!map[t.date]) {
+          map[t.date] = { hasIncome: false, hasExpense: false, count: 0 };
+        }
+        map[t.date].count++;
+        if (t.type === 'INCOME') map[t.date].hasIncome = true;
+        if (t.type === 'EXPENSE' || t.type === 'REFUND') map[t.date].hasExpense = true;
+      });
+      return map;
+    }, [transactions]);
+
+    // 7-column calendar day cells for current calYear and calMonth (Requirement #1)
+    const calCells = useMemo(() => {
+      const firstDayObj = new Date(calYear, calMonth - 1, 1);
+      const daysInCalMonth = new Date(calYear, calMonth, 0).getDate();
+      const startingDay = (firstDayObj.getDay() + 6) % 7; // Mon = 0..Sun = 6
+      const daysInPrevMonth = new Date(calYear, calMonth - 1, 0).getDate();
+
+      const cells = [];
+      for (let i = startingDay - 1; i >= 0; i--) {
+        const dNum = daysInPrevMonth - i;
+        let prevM = calMonth - 1;
+        let prevY = calYear;
+        if (prevM < 1) { prevM = 12; prevY--; }
+        const dStr = `${prevY}-${pad(prevM)}-${pad(dNum)}`;
+        cells.push({ day: dNum, dateStr: dStr, isCurrentMonth: false, year: prevY, month: prevM });
+      }
+      for (let d = 1; d <= daysInCalMonth; d++) {
+        const dStr = `${calYear}-${pad(calMonth)}-${pad(d)}`;
+        cells.push({ day: d, dateStr: dStr, isCurrentMonth: true, year: calYear, month: calMonth });
+      }
+      const remainingSlots = (7 - (cells.length % 7)) % 7;
+      for (let n = 1; n <= remainingSlots; n++) {
+        let nextM = calMonth + 1;
+        let nextY = calYear;
+        if (nextM > 12) { nextM = 1; nextY++; }
+        const dStr = `${nextY}-${pad(nextM)}-${pad(n)}`;
+        cells.push({ day: n, dateStr: dStr, isCurrentMonth: false, year: nextY, month: nextM });
+      }
+      return cells;
+    }, [calYear, calMonth]);
+
+    const selectedDateInfo = useMemo(() => formatFullDate(selectedDate), [selectedDate]);
+
+    // Selected Date Summary dynamic calculations (Requirement #2)
+    const dateStats = useMemo(() => {
+      let inc = 0;
+      let exp = 0;
+      transactions.forEach((t) => {
+        if (t.date === selectedDate) {
+          if (t.type === 'INCOME') inc += t.amount;
+          else if (t.type === 'EXPENSE' || t.type === 'REFUND') exp += t.amount;
+        }
+      });
+      inc = safeRound(inc);
+      exp = safeRound(exp);
+      const net = safeRound(inc - exp);
+      return { income: inc, expenses: exp, net };
+    }, [transactions, selectedDate]);
+
+    // Filtered Transactions for Transactions & Calendar View (Requirements #1, #2, #3, #9)
+    const displayedTxns = useMemo(() => {
+      const todayDateStr = `${currentYear}-${currentMonthStr}-${pad(now.getDate())}`;
+
+      const yDate = new Date();
+      yDate.setDate(yDate.getDate() - 1);
+      const yesterdayDateStr = `${yDate.getFullYear()}-${pad(yDate.getMonth() + 1)}-${pad(yDate.getDate())}`;
+
+      // This week: Monday to Sunday
+      const curr = new Date();
+      const dayOfWeek = curr.getDay();
+      const diffToMonday = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+      const monday = new Date(curr);
+      monday.setDate(curr.getDate() + diffToMonday);
+      const sunday = new Date(monday);
+      sunday.setDate(monday.getDate() + 6);
+      const mondayStr = `${monday.getFullYear()}-${pad(monday.getMonth() + 1)}-${pad(monday.getDate())}`;
+      const sundayStr = `${sunday.getFullYear()}-${pad(sunday.getMonth() + 1)}-${pad(sunday.getDate())}`;
+
+      const list = transactions.filter((t) => {
+        // 1. Date filter mode
+        if (dateFilterMode === 'CALENDAR') {
+          if (t.date !== selectedDate) return false;
+        } else if (dateFilterMode === 'TODAY') {
+          if (t.date !== todayDateStr) return false;
+        } else if (dateFilterMode === 'YESTERDAY') {
+          if (t.date !== yesterdayDateStr) return false;
+        } else if (dateFilterMode === 'THIS_WEEK') {
+          if (!t.date || t.date < mondayStr || t.date > sundayStr) return false;
+        } else if (dateFilterMode === 'THIS_MONTH') {
+          const prefix = `${calYear}-${pad(calMonth)}`;
+          if (!t.date || !t.date.startsWith(prefix)) return false;
+        }
+        // dateFilterMode === 'ALL' matches all dates
+
+        // 2. Search query filter
+        if (txnSearch.trim()) {
+          const q = txnSearch.trim().toLowerCase();
+          const matchDesc = t.description && t.description.toLowerCase().includes(q);
+          const matchNotes = t.notes && t.notes.toLowerCase().includes(q);
+          const matchCat = t.categoryName && t.categoryName.toLowerCase().includes(q);
+          const matchPay = t.paymentMethod && t.paymentMethod.toLowerCase().includes(q);
+          const matchAmt = String(t.amount || '').includes(q);
+          if (!matchDesc && !matchNotes && !matchCat && !matchPay && !matchAmt) return false;
+        }
+
+        // 3. Type filter
+        if (txnTypeFilter !== 'ALL' && t.type !== txnTypeFilter) return false;
+
+        // 4. Category filter
+        if (txnCatFilter !== 'ALL' && t.categoryId !== txnCatFilter) return false;
+
+        return true;
+      });
+
+      // Sort
+      list.sort((a, b) => {
+        if (txnSort === 'NEWEST') {
+          if (a.date !== b.date) return b.date > a.date ? 1 : -1;
+          const aTime = a.time || '00:00';
+          const bTime = b.time || '00:00';
+          return bTime > aTime ? 1 : -1;
+        }
+        if (txnSort === 'OLDEST') {
+          if (a.date !== b.date) return a.date > b.date ? 1 : -1;
+          const aTime = a.time || '00:00';
+          const bTime = b.time || '00:00';
+          return aTime > bTime ? 1 : -1;
+        }
+        if (txnSort === 'HIGHEST') return b.amount - a.amount;
+        if (txnSort === 'LOWEST') return a.amount - b.amount;
+        return 0;
+      });
+
+      return list;
+    }, [transactions, dateFilterMode, selectedDate, calYear, calMonth, txnSearch, txnTypeFilter, txnCatFilter, txnSort]);
+
     // Calculate Comprehensive Financial Engine
     const stats = useMemo(() => {
       return calculateFinanceEngine({
@@ -873,25 +1163,78 @@
       return { list, total: safeRound(total) };
     }, [transactions, categories, viewYear, viewMonth]);
 
-    // Save or Edit Transaction
+    // Save or Edit Transaction (Requirements #4, #5, #6, #13, #14, #15, #16)
     const handleSaveTransaction = (txnData) => {
       if (editingTxn) {
+        // Goal contribution adjustment
+        if (editingTxn.type === 'FUND_CONTRIBUTION' && editingTxn.goalId) {
+          const delta = (txnData.type === 'FUND_CONTRIBUTION' ? txnData.amount : 0) - editingTxn.amount;
+          if (delta !== 0) {
+            setGoals((prev) =>
+              prev.map((g) => (g.id === editingTxn.goalId ? { ...g, currentAmount: safeRound(Math.max(0, g.currentAmount + delta)) } : g))
+            );
+          }
+        } else if (txnData.type === 'FUND_CONTRIBUTION' && txnData.goalId) {
+          setGoals((prev) =>
+            prev.map((g) => (g.id === txnData.goalId ? { ...g, currentAmount: safeRound(g.currentAmount + txnData.amount) } : g))
+          );
+        }
+
+        // Recurring template update if requested
+        if (txnData.updateRecurringTemplate && editingTxn.isRecurring) {
+          setRecurringPayments((prev) =>
+            prev.map((p) => (p.name === editingTxn.description ? { ...p, amount: txnData.amount } : p))
+          );
+        }
+
+        // Preserve source & metadata
+        const updatedTxn = {
+          ...editingTxn,
+          ...txnData,
+          source: editingTxn.source || 'MANUAL',
+          isEdited: editingTxn.source === 'SMS' ? true : editingTxn.isEdited,
+          updatedAt: new Date().toISOString()
+        };
+
         setTransactions((prev) =>
-          prev.map((t) => (t.id === editingTxn.id ? { ...t, ...txnData, updatedAt: new Date().toISOString() } : t))
+          prev.map((t) => (t.id === editingTxn.id ? updatedTxn : t))
         );
-        showToast('Transaction updated successfully!');
+
+        // Sync with Supabase (Requirement #13)
+        syncTransactionToSupabase('UPDATE', updatedTxn, supabaseConfig);
+
+        // Date Editing (Requirement #5): Automatically move to and display the new date
+        if (txnData.date) {
+          setSelectedDate(txnData.date);
+          const [y, m] = txnData.date.split('-').map(Number);
+          setCalYear(y);
+          setCalMonth(m);
+        }
+
+        showToast('Transaction updated');
       } else {
         const newTxn = {
           id: 'txn-' + Date.now(),
+          source: 'MANUAL',
           ...txnData,
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString()
         };
         setTransactions((prev) => [newTxn, ...prev]);
 
-        // If transaction is a Goal contribution, update the goal
+        // If Goal contribution
         if (txnData.type === 'FUND_CONTRIBUTION' && txnData.goalId) {
           handleAddContribution(txnData.goalId, txnData.amount, txnData.description || 'Goal allocation');
+        }
+
+        // Sync with Supabase
+        syncTransactionToSupabase('INSERT', newTxn, supabaseConfig);
+
+        if (txnData.date) {
+          setSelectedDate(txnData.date);
+          const [y, m] = txnData.date.split('-').map(Number);
+          setCalYear(y);
+          setCalMonth(m);
         }
 
         showToast('Transaction recorded successfully!');
@@ -909,19 +1252,33 @@
         id: 'txn-' + Date.now(),
         date: todayStr,
         time: timeStr,
+        source: 'MANUAL',
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
       };
       setTransactions((prev) => [dup, ...prev]);
+      syncTransactionToSupabase('INSERT', dup, supabaseConfig);
       showToast(`Duplicated: ${dup.description}`);
     };
 
-    // Delete Transaction
+    // Delete Transaction (Requirement #7)
     const handleDeleteTxn = (id) => {
+      const target = transactions.find((t) => t.id === id);
+      if (target) {
+        if (target.type === 'FUND_CONTRIBUTION' && target.goalId) {
+          setGoals((prev) =>
+            prev.map((g) => (g.id === target.goalId ? { ...g, currentAmount: safeRound(Math.max(0, g.currentAmount - target.amount)) } : g))
+          );
+        }
+        syncTransactionToSupabase('DELETE', target, supabaseConfig);
+      }
+
       setTransactions((prev) => prev.filter((t) => t.id !== id));
       setDeletingTxnId(null);
       setActiveTxnForMenu(null);
-      showToast('Transaction deleted.');
+      setIsAddTxnOpen(false);
+      setEditingTxn(null);
+      showToast('Transaction deleted');
     };
 
     // Goal Handlers (Create, Edit, Archive, Contribute)
@@ -1347,41 +1704,18 @@
     };
 
     // =========================================================================
-    // 2. TRANSACTIONS VIEW (Requirement #2)
+    // 2. TRANSACTIONS & CALENDAR VIEW (Requirements #1 - #12)
     // =========================================================================
     const renderTransactionsView = () => {
-      // Improved search: merchant/title, note, category, payment account, amount
-      const filtered = transactions.filter((t) => {
-        if (txnSearch.trim()) {
-          const q = txnSearch.trim().toLowerCase();
-          const matchDesc = t.description && t.description.toLowerCase().includes(q);
-          const matchNotes = t.notes && t.notes.toLowerCase().includes(q);
-          const matchCat = t.categoryName && t.categoryName.toLowerCase().includes(q);
-          const matchPay = t.paymentMethod && t.paymentMethod.toLowerCase().includes(q);
-          const matchAmt = String(t.amount || '').includes(q);
-          if (!matchDesc && !matchNotes && !matchCat && !matchPay && !matchAmt) return false;
-        }
-        if (txnTypeFilter !== 'ALL' && t.type !== txnTypeFilter) return false;
-        if (txnCatFilter !== 'ALL' && t.categoryId !== txnCatFilter) return false;
-        const targetPrefix = `${viewYear}-${pad(viewMonth)}`;
-        if (t.date && !t.date.startsWith(targetPrefix)) return false;
-        return true;
-      });
-
-      // Sort
-      filtered.sort((a, b) => {
-        if (txnSort === 'NEWEST') return b.date > a.date ? 1 : -1;
-        if (txnSort === 'OLDEST') return a.date > b.date ? 1 : -1;
-        if (txnSort === 'HIGHEST') return b.amount - a.amount;
-        if (txnSort === 'LOWEST') return a.amount - b.amount;
-        return 0;
-      });
+      // Filter transactions based on dateFilterMode, text search, type, category, and sort
+      const filtered = displayedTxns;
 
       return h('div', { className: 'page-view' },
+        // Top Header
         h('div', { className: 'section-header' },
           h('div', { className: 'section-title' },
-            h('span', null, '📋'),
-            ` Daily Financial Log (${filtered.length})`
+            h('span', null, '📅'),
+            ` Calendar & Financial Log`
           ),
           h('button', {
             type: 'button',
@@ -1393,86 +1727,285 @@
           }, '➕ New')
         ),
 
-        // Filter & Search Controls
-        h('div', { className: 'filter-bar' },
-          h('div', { className: 'search-input-wrap' },
-            h('span', { className: 'search-icon' }, '🔍'),
-            h('input', {
-              type: 'text',
-              className: 'search-input',
-              placeholder: 'Search merchant, note, category, amount...',
-              value: txnSearch,
-              onChange: (e) => setTxnSearch(e.target.value)
-            })
-          ),
-          h('select', {
-            className: 'filter-select',
-            value: txnTypeFilter,
-            onChange: (e) => setTxnTypeFilter(e.target.value)
-          },
-            h('option', { value: 'ALL' }, 'All Types'),
-            h('option', { value: 'EXPENSE' }, 'Expenses'),
-            h('option', { value: 'INCOME' }, 'Income'),
-            h('option', { value: 'FUND_CONTRIBUTION' }, 'Goal Allocations'),
-            h('option', { value: 'TRANSFER' }, 'Transfers')
-          ),
-          h('select', {
-            className: 'filter-select',
-            value: txnCatFilter,
-            onChange: (e) => setTxnCatFilter(e.target.value)
-          },
-            h('option', { value: 'ALL' }, 'All Categories'),
-            categories.map((c) => h('option', { key: c.id, value: c.id }, `${c.icon} ${c.name}`))
-          ),
-          h('select', {
-            className: 'filter-select',
-            value: txnSort,
-            onChange: (e) => setTxnSort(e.target.value)
-          },
-            h('option', { value: 'NEWEST' }, 'Newest First'),
-            h('option', { value: 'OLDEST' }, 'Oldest First'),
-            h('option', { value: 'HIGHEST' }, 'Highest Amount'),
-            h('option', { value: 'LOWEST' }, 'Lowest Amount')
-          )
+        // Quick Date Filter Chips Banner (Requirement #9)
+        h('div', { className: 'quick-date-chips-wrap' },
+          h('button', {
+            type: 'button',
+            className: `quick-date-chip ${dateFilterMode === 'CALENDAR' ? 'active' : ''}`,
+            onClick: () => setDateFilterMode('CALENDAR')
+          }, `📅 ${selectedDateInfo.shortFormatted}`),
+          h('button', {
+            type: 'button',
+            className: `quick-date-chip ${dateFilterMode === 'TODAY' ? 'active' : ''}`,
+            onClick: () => {
+              const todayDateStr = `${currentYear}-${currentMonthStr}-${pad(now.getDate())}`;
+              setSelectedDate(todayDateStr);
+              setCalYear(currentYear);
+              setCalMonth(currentMonthNum);
+              setDateFilterMode('TODAY');
+            }
+          }, '⚡ Today'),
+          h('button', {
+            type: 'button',
+            className: `quick-date-chip ${dateFilterMode === 'YESTERDAY' ? 'active' : ''}`,
+            onClick: () => {
+              const yDate = new Date();
+              yDate.setDate(yDate.getDate() - 1);
+              const yStr = `${yDate.getFullYear()}-${pad(yDate.getMonth() + 1)}-${pad(yDate.getDate())}`;
+              setSelectedDate(yStr);
+              setCalYear(yDate.getFullYear());
+              setCalMonth(yDate.getMonth() + 1);
+              setDateFilterMode('YESTERDAY');
+            }
+          }, '⏮️ Yesterday'),
+          h('button', {
+            type: 'button',
+            className: `quick-date-chip ${dateFilterMode === 'THIS_WEEK' ? 'active' : ''}`,
+            onClick: () => setDateFilterMode('THIS_WEEK')
+          }, '📆 This Week'),
+          h('button', {
+            type: 'button',
+            className: `quick-date-chip ${dateFilterMode === 'THIS_MONTH' ? 'active' : ''}`,
+            onClick: () => setDateFilterMode('THIS_MONTH')
+          }, '🗓️ This Month'),
+          h('button', {
+            type: 'button',
+            className: `quick-date-chip ${dateFilterMode === 'ALL' ? 'active' : ''}`,
+            onClick: () => setDateFilterMode('ALL')
+          }, '📋 All Records')
         ),
 
-        // Transaction List (with ⋯ action menu)
-        filtered.length === 0
-          ? h('div', { className: 'empty-state' },
-              h('span', { className: 'empty-icon' }, '🔍'),
-              h('div', { className: 'empty-title' }, 'No transactions found'),
-              h('div', { className: 'empty-desc' }, 'Try clearing your search query or log a new transaction.')
-            )
-          : h('div', { className: 'txn-list' },
-              filtered.map((t) =>
-                h('div', { key: t.id, className: 'txn-card' },
-                  h('div', { className: 'txn-left' },
-                    h('div', { className: 'txn-cat-icon' }, t.categoryIcon || '📦'),
-                    h('div', { className: 'txn-details' },
-                      h('div', { className: 'txn-desc' }, t.description),
-                      h('div', { className: 'txn-meta' },
-                        h('span', { className: 'txn-pill' }, t.categoryName || 'Other'),
-                        h('span', { className: 'txn-pill' }, t.paymentMethod || 'UPI'),
-                        t.isRecurring ? h('span', { className: 'txn-pill', style: { color: 'var(--neon-green)' } }, '🔄 Recurring') : null
-                      ),
-                      t.notes ? h('div', { style: { fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' } }, t.notes) : null
-                    )
-                  ),
-                  h('div', { className: 'txn-right' },
-                    h('div', { className: `txn-amount ${t.type.toLowerCase()}` },
-                      `${t.type === 'INCOME' ? '+' : '-'}${formatCurrency(t.amount, profile.currency)}`
-                    ),
-                    h('div', { className: 'txn-date-time' }, `${t.date} ${t.time || ''}`),
-                    h('button', {
-                      type: 'button',
-                      className: 'txn-more-btn',
-                      title: 'More actions',
-                      onClick: () => setActiveTxnForMenu(t)
-                    }, '⋯')
-                  )
+        // Desktop 2-Column or Mobile Stacked Flow (Requirements #11 & #12)
+        h('div', { className: 'transactions-desktop-layout' },
+          // Left Column: Interactive Calendar + Search Filters
+          h('div', null,
+            // Interactive Calendar Card (Requirement #1 & #10)
+            h('div', {
+              className: 'calendar-card',
+              onTouchStart: handleTouchStart,
+              onTouchEnd: handleTouchEnd
+            },
+              h('div', { className: 'calendar-header' },
+                h('div', { className: 'calendar-title-wrap' },
+                  h('span', { style: { fontSize: '18px' } }, '📅'),
+                  h('span', { className: 'calendar-month-title' }, `${getMonthName(calMonth - 1)} ${calYear}`)
+                ),
+                h('div', { className: 'calendar-nav-controls' },
+                  h('button', {
+                    type: 'button',
+                    className: 'cal-nav-btn',
+                    title: 'Previous Month',
+                    onClick: handleCalPrevMonth
+                  }, '‹'),
+                  h('button', {
+                    type: 'button',
+                    className: 'cal-nav-btn',
+                    title: 'Next Month',
+                    onClick: handleCalNextMonth
+                  }, '›'),
+                  h('button', {
+                    type: 'button',
+                    className: 'cal-today-btn',
+                    title: 'Jump to Current Month and Today',
+                    onClick: handleCalJumpToday
+                  }, 'TODAY')
                 )
+              ),
+
+              // Calendar Weekday Headers (Mon..Sun)
+              h('div', { className: 'calendar-weekdays-row' },
+                ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((day) =>
+                  h('div', { key: day, className: 'calendar-weekday-col' }, day)
+                )
+              ),
+
+              // Calendar Days Grid
+              h('div', { className: 'calendar-grid' },
+                calCells.map((cell, idx) => {
+                  const todayDateStr = `${currentYear}-${currentMonthStr}-${pad(now.getDate())}`;
+                  const isCellSelected = cell.dateStr === selectedDate;
+                  const isCellToday = cell.dateStr === todayDateStr;
+                  const ind = dateIndicators[cell.dateStr];
+
+                  return h('div', {
+                    key: `${cell.dateStr}-${idx}`,
+                    className: `calendar-day-cell ${cell.isCurrentMonth ? '' : 'other-month'} ${isCellToday ? 'today' : ''} ${isCellSelected ? 'selected' : ''}`,
+                    onClick: () => {
+                      setSelectedDate(cell.dateStr);
+                      setDateFilterMode('CALENDAR');
+                      if (!cell.isCurrentMonth) {
+                        setCalYear(cell.year);
+                        setCalMonth(cell.month);
+                      }
+                    }
+                  },
+                    h('span', { className: 'day-num' }, cell.day),
+                    ind && (ind.hasIncome || ind.hasExpense)
+                      ? h('div', { className: 'day-dots' },
+                          ind.hasIncome ? h('span', { className: 'cal-dot income' }) : null,
+                          ind.hasExpense ? h('span', { className: 'cal-dot expense' }) : null
+                        )
+                      : h('div', { className: 'day-dots' })
+                  );
+                })
+              )
+            ),
+
+            // Search & Filters Bar
+            h('div', { className: 'filter-bar' },
+              h('div', { className: 'search-input-wrap' },
+                h('span', { className: 'search-icon' }, '🔍'),
+                h('input', {
+                  type: 'text',
+                  className: 'search-input',
+                  placeholder: 'Search merchant, note, category, amount...',
+                  value: txnSearch,
+                  onChange: (e) => setTxnSearch(e.target.value)
+                })
+              ),
+              h('select', {
+                className: 'filter-select',
+                value: txnTypeFilter,
+                onChange: (e) => setTxnTypeFilter(e.target.value)
+              },
+                h('option', { value: 'ALL' }, 'All Types'),
+                h('option', { value: 'EXPENSE' }, 'Expenses'),
+                h('option', { value: 'INCOME' }, 'Income'),
+                h('option', { value: 'REFUND' }, 'Refunds'),
+                h('option', { value: 'FUND_CONTRIBUTION' }, 'Goal Allocations'),
+                h('option', { value: 'TRANSFER' }, 'Transfers')
+              ),
+              h('select', {
+                className: 'filter-select',
+                value: txnCatFilter,
+                onChange: (e) => setTxnCatFilter(e.target.value)
+              },
+                h('option', { value: 'ALL' }, 'All Categories'),
+                categories.map((c) => h('option', { key: c.id, value: c.id }, `${c.icon} ${c.name}`))
+              ),
+              h('select', {
+                className: 'filter-select',
+                value: txnSort,
+                onChange: (e) => setTxnSort(e.target.value)
+              },
+                h('option', { value: 'NEWEST' }, 'Newest First'),
+                h('option', { value: 'OLDEST' }, 'Oldest First'),
+                h('option', { value: 'HIGHEST' }, 'Highest Amount'),
+                h('option', { value: 'LOWEST' }, 'Lowest Amount')
               )
             )
+          ),
+
+          // Right Column: Selected Date Summary + Daily Transactions List (Requirement #2 & #3)
+          h('div', null,
+            // Selected Date Summary Card
+            h('div', { className: 'date-summary-card' },
+              h('div', { className: 'date-summary-header' },
+                h('div', { className: 'date-summary-title' },
+                  h('span', null, '📅'),
+                  ` Selected Date: ${selectedDateInfo.formatted}`
+                ),
+                h('div', { className: 'date-summary-weekday' }, selectedDateInfo.weekday)
+              ),
+              h('div', { className: 'date-summary-metrics' },
+                h('div', { className: 'date-metric-item' },
+                  h('span', { className: 'date-metric-label' }, 'Income'),
+                  h('span', { className: 'date-metric-value income' }, `+${formatCurrency(dateStats.income, profile.currency)}`)
+                ),
+                h('div', { className: 'date-metric-item' },
+                  h('span', { className: 'date-metric-label' }, 'Expenses'),
+                  h('span', { className: 'date-metric-value expense' }, formatCurrency(dateStats.expenses, profile.currency))
+                ),
+                h('div', { className: 'date-metric-item' },
+                  h('span', { className: 'date-metric-label' }, 'Net'),
+                  h('span', {
+                    className: `date-metric-value ${dateStats.net > 0 ? 'net-positive' : dateStats.net < 0 ? 'net-negative' : 'net-zero'}`
+                  }, `${dateStats.net > 0 ? '+' : ''}${formatCurrency(dateStats.net, profile.currency)}`)
+                )
+              )
+            ),
+
+            // Date Transaction List (Requirement #3)
+            h('div', { className: 'section-header', style: { marginTop: '10px' } },
+              h('div', { className: 'section-title', style: { fontSize: '14px' } },
+                h('span', null, '📋'),
+                ` Transactions (${filtered.length})`
+              ),
+              h('button', {
+                type: 'button',
+                className: 'today-jump-btn',
+                onClick: () => {
+                  setEditingTxn(null);
+                  setIsAddTxnOpen(true);
+                }
+              }, '+ Add for Date')
+            ),
+
+            filtered.length === 0
+              ? h('div', { className: 'empty-state' },
+                  h('span', { className: 'empty-icon' }, '📅'),
+                  h('div', { className: 'empty-title' }, `No transactions on ${selectedDateInfo.formatted}`),
+                  h('div', { className: 'empty-desc' }, 'No financial activities recorded for this date.'),
+                  h('button', {
+                    type: 'button',
+                    className: 'submit-btn',
+                    style: { marginTop: '12px', fontSize: '13px', padding: '10px 16px' },
+                    onClick: () => {
+                      setEditingTxn(null);
+                      setIsAddTxnOpen(true);
+                    }
+                  }, '➕ Log Transaction for this Date')
+                )
+              : h('div', { className: 'txn-list' },
+                  filtered.map((t) =>
+                    h('div', {
+                      key: t.id,
+                      className: 'txn-card clickable',
+                      title: 'Click to edit transaction',
+                      onClick: () => {
+                        setEditingTxn(t);
+                        setIsAddTxnOpen(true);
+                      }
+                    },
+                      h('div', { className: 'txn-left' },
+                        h('div', { className: 'txn-cat-icon' }, t.categoryIcon || '📦'),
+                        h('div', { className: 'txn-details' },
+                          h('div', { className: 'txn-desc' }, t.description),
+                          h('div', { className: 'txn-meta' },
+                            h('span', { className: 'txn-pill' }, t.categoryName || 'Other'),
+                            h('span', { className: 'txn-pill' }, t.paymentMethod || 'UPI'),
+                            t.time ? h('span', { className: 'txn-pill' }, formatTimeAMPM(t.time)) : null,
+                            t.source === 'SMS'
+                              ? h('span', { className: 'source-badge sms' }, '📱 SMS' + (t.isEdited ? ' · Edited' : ''))
+                              : t.source === 'IMPORT'
+                              ? h('span', { className: 'source-badge import' }, '📥 Import')
+                              : t.isRecurring
+                              ? h('span', { className: 'source-badge recurring' }, '🔄 Auto')
+                              : h('span', { className: 'source-badge manual' }, '✏️ Manual')
+                          ),
+                          t.notes ? h('div', { style: { fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' } }, t.notes) : null
+                        )
+                      ),
+                      h('div', { className: 'txn-right' },
+                        h('div', { className: `txn-amount ${t.type.toLowerCase()}` },
+                          `${t.type === 'INCOME' ? '+' : '-'}${formatCurrency(t.amount, profile.currency)}`
+                        ),
+                        h('div', { className: 'txn-date-time' }, `${t.date} ${t.time ? formatTimeAMPM(t.time) : ''}`),
+                        h('button', {
+                          type: 'button',
+                          className: 'txn-more-btn',
+                          title: 'More actions',
+                          onClick: (e) => {
+                            e.stopPropagation();
+                            setActiveTxnForMenu(t);
+                          }
+                        }, '⋯')
+                      )
+                    )
+                  )
+                )
+          )
+        )
       );
     };
 
@@ -2242,6 +2775,7 @@
 
       return h(AddTxnModalDialog, {
         txn: editingTxn,
+        defaultDate: selectedDate,
         categories,
         goals,
         paymentMethods: DEFAULT_PAYMENT_METHODS,
@@ -2250,7 +2784,10 @@
           setIsAddTxnOpen(false);
           setEditingTxn(null);
         },
-        onSave: handleSaveTransaction
+        onSave: handleSaveTransaction,
+        onDelete: (txnToDelete) => {
+          handleDeleteTxn(txnToDelete.id);
+        }
       });
     };
 
@@ -2544,8 +3081,8 @@
   // MODAL DIALOG COMPONENTS
   // ===========================================================================
 
-  // Add Money Activity Modal Dialog (Requirement #1)
-  function AddTxnModalDialog({ txn, categories, goals, paymentMethods, currency, onClose, onSave }) {
+  // Add / Edit Transaction Modal Dialog (Requirements #4, #5, #6, #7, #14, #15, #16)
+  function AddTxnModalDialog({ txn, defaultDate, categories, goals, paymentMethods, currency, onClose, onSave, onDelete }) {
     const isEdit = Boolean(txn);
     const todayStr = new Date().toISOString().split('T')[0];
     const timeStr = new Date().toTimeString().slice(0, 5);
@@ -2553,15 +3090,20 @@
     const [type, setType] = useState(txn?.type || 'EXPENSE');
     const [amount, setAmount] = useState(txn ? String(txn.amount) : '');
     const [categoryId, setCategoryId] = useState(txn?.categoryId || 'cat-food');
-    const [selectedGoalId, setSelectedGoalId] = useState(goals[0]?.id || '');
-    const [date, setDate] = useState(txn?.date || todayStr);
+    const [selectedGoalId, setSelectedGoalId] = useState(txn?.goalId || goals[0]?.id || '');
+    const [date, setDate] = useState(txn?.date || defaultDate || todayStr);
     const [time, setTime] = useState(txn?.time || timeStr);
     const [paymentMethod, setPaymentMethod] = useState(txn?.paymentMethod || 'UPI');
     const [description, setDescription] = useState(txn?.description || '');
     const [notes, setNotes] = useState(txn?.notes || '');
     const [isRecurring, setIsRecurring] = useState(txn?.isRecurring || false);
+    const [updateRecurringTemplate, setUpdateRecurringTemplate] = useState(false);
+    const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
-    const filteredCategories = categories.filter((c) => (type === 'INCOME' ? c.type === 'INCOME' : c.type === 'EXPENSE'));
+    const filteredCategories = categories.filter((c) => {
+      if (type === 'INCOME') return c.type === 'INCOME';
+      return c.type === 'EXPENSE';
+    });
 
     const handleFormSubmit = (e) => {
       e.preventDefault();
@@ -2595,7 +3137,8 @@
         paymentMethod,
         description: finalDesc,
         notes: notes.trim(),
-        isRecurring
+        isRecurring,
+        updateRecurringTemplate: Boolean(updateRecurringTemplate && isRecurring)
       });
     };
 
@@ -2604,16 +3147,41 @@
         h('div', { className: 'sheet-header' },
           h('div', { className: 'sheet-title' },
             h('span', null, isEdit ? '✏️' : '➕'),
-            isEdit ? 'Edit Transaction' : 'Add Money Activity'
+            isEdit ? ' Edit Transaction' : ' Add Money Activity'
           ),
           h('button', { type: 'button', className: 'sheet-close-btn', onClick: onClose }, '✕')
         ),
 
-        // Type Segmented Control (Requirement #1)
+        // Source metadata display (Requirement #14)
+        isEdit &&
+          h('div', {
+            style: {
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              padding: '8px 12px',
+              background: 'rgba(255, 255, 255, 0.03)',
+              borderRadius: '8px',
+              marginBottom: '14px',
+              border: '1px solid var(--border-subtle)'
+            }
+          },
+            h('div', { style: { fontSize: '12px', color: 'var(--text-dim)' } }, 'Record Source:'),
+            txn.source === 'SMS'
+              ? h('span', { className: 'source-badge sms' }, '📱 SMS (Auto-detected)' + (txn.isEdited ? ' · Edited' : ''))
+              : txn.source === 'IMPORT'
+              ? h('span', { className: 'source-badge import' }, '📥 Imported File')
+              : txn.isRecurring
+              ? h('span', { className: 'source-badge recurring' }, '🔄 Auto Recurring')
+              : h('span', { className: 'source-badge manual' }, '✏️ Manual Entry')
+          ),
+
+        // Type Segmented Control (Requirements #1 & #4)
         h('div', { className: 'type-segmented-control' },
           [
             { id: 'EXPENSE', label: 'Expense' },
             { id: 'INCOME', label: 'Income' },
+            { id: 'REFUND', label: 'Refund' },
             { id: 'TRANSFER', label: 'Transfer' },
             { id: 'FUND_CONTRIBUTION', label: 'Savings Goal' }
           ].map((t) =>
@@ -2624,7 +3192,7 @@
               onClick: () => {
                 setType(t.id);
                 if (t.id === 'INCOME') setCategoryId('cat-salary');
-                else if (t.id === 'EXPENSE') setCategoryId('cat-food');
+                else if (t.id === 'EXPENSE' || t.id === 'REFUND') setCategoryId('cat-food');
               }
             }, t.label)
           )
@@ -2721,15 +3289,23 @@
                 )
               ),
 
-          // Date & Time Row
+          // Date & Time Row (Requirement #5: Date field opens calendar and moves transaction on save)
           h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' } },
             h('div', { className: 'form-group' },
-              h('label', { className: 'form-label' }, 'Date'),
+              h('label', { className: 'form-label', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
+                h('span', null, 'Date (opens calendar) *'),
+                h('span', { style: { color: 'var(--neon-green)', fontSize: '11px', fontWeight: 600 } }, formatFullDate(date).formatted)
+              ),
               h('input', {
                 type: 'date',
                 required: true,
                 className: 'form-input',
                 value: date,
+                onClick: (e) => {
+                  if (e.target && typeof e.target.showPicker === 'function') {
+                    try { e.target.showPicker(); } catch {}
+                  }
+                },
                 onChange: (e) => setDate(e.target.value)
               })
             ),
@@ -2744,6 +3320,29 @@
             )
           ),
 
+          // Recurring Options (Requirement #16)
+          txn && txn.isRecurring
+            ? h('div', {
+                style: {
+                  padding: '10px 12px',
+                  background: 'rgba(0, 245, 155, 0.05)',
+                  borderRadius: '8px',
+                  marginBottom: '14px',
+                  border: '1px solid rgba(0, 245, 155, 0.2)'
+                }
+              },
+                h('div', { style: { fontSize: '12px', fontWeight: 800, color: 'var(--neon-green)', marginBottom: '6px' } }, '🔄 Recurring Payment'),
+                h('label', { style: { display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: '#fff', cursor: 'pointer' } },
+                  h('input', {
+                    type: 'checkbox',
+                    checked: updateRecurringTemplate,
+                    onChange: (e) => setUpdateRecurringTemplate(e.target.checked)
+                  }),
+                  'Also update future recurring payment rule amount'
+                )
+              )
+            : null,
+
           // Notes
           h('div', { className: 'form-group' },
             h('label', { className: 'form-label' }, 'Optional Notes'),
@@ -2756,11 +3355,57 @@
             })
           ),
 
+          // Action Buttons with Prominent SAVE CHANGES (Requirement #6)
           h('div', { className: 'sheet-actions' },
             h('button', { type: 'button', className: 'cancel-btn', onClick: onClose }, 'Cancel'),
-            h('button', { type: 'submit', className: 'submit-btn' }, isEdit ? 'Update Activity' : 'Record Activity')
+            h('button', {
+              type: 'submit',
+              className: 'submit-btn',
+              style: { fontWeight: 900, letterSpacing: '0.02em' }
+            }, isEdit ? 'SAVE CHANGES' : 'RECORD ACTIVITY')
+          ),
+
+          // Delete Transaction inside Edit Form (Requirement #7)
+          isEdit &&
+            h('div', { style: { marginTop: '16px', paddingTop: '16px', borderTop: '1px solid var(--border-subtle)' } },
+              h('button', {
+                type: 'button',
+                className: 'danger-btn',
+                style: { width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' },
+                onClick: () => setShowDeleteConfirm(true)
+              }, '🗑️ Delete Transaction')
+            )
+        ),
+
+        // Delete Confirmation Modal Overlay (Requirement #7)
+        showDeleteConfirm &&
+          h('div', { className: 'modal-backdrop', style: { zIndex: 100000 } },
+            h('div', { className: 'bottom-sheet-card', style: { maxWidth: '380px', border: '1px solid var(--overspent-red)' } },
+              h('div', { className: 'sheet-header' },
+                h('div', { className: 'sheet-title', style: { color: 'var(--overspent-red)' } }, 'Delete this transaction?'),
+                h('button', { type: 'button', className: 'sheet-close-btn', onClick: () => setShowDeleteConfirm(false) }, '✕')
+              ),
+              h('p', { style: { color: 'var(--text-muted)', fontSize: '13.5px', marginBottom: '20px', lineHeight: 1.5 } },
+                'This action cannot be undone.'
+              ),
+              h('div', { className: 'sheet-actions' },
+                h('button', {
+                  type: 'button',
+                  className: 'cancel-btn',
+                  onClick: () => setShowDeleteConfirm(false)
+                }, 'CANCEL'),
+                h('button', {
+                  type: 'button',
+                  className: 'danger-btn',
+                  onClick: () => {
+                    setShowDeleteConfirm(false);
+                    onClose();
+                    if (onDelete) onDelete(txn);
+                  }
+                }, 'DELETE')
+              )
+            )
           )
-        )
       )
     );
   }
