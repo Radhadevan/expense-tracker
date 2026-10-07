@@ -886,13 +886,15 @@
       }
     });
 
-    // Navigation & Viewing State (FUNDS renamed to GOALS)
+    // Navigation & Viewing State (HOME, TRANSACTIONS, BUDGET, SETTINGS)
     const [activeTab, setActiveTab] = useState(() => {
       if (typeof window !== 'undefined' && window.location.hash) {
         const h = window.location.hash.replace('#', '').toUpperCase();
-        if (['HOME', 'TRANSACTIONS', 'GOALS', 'BUDGET', 'REPORTS', 'MORE', 'FIXED_PAYMENTS'].includes(h)) {
+        if (['HOME', 'TRANSACTIONS', 'BUDGET', 'SETTINGS'].includes(h)) {
           return h;
         }
+        if (['MORE', 'FIXED_PAYMENTS'].includes(h)) return 'SETTINGS';
+        if (['GOALS', 'REPORTS'].includes(h)) return 'BUDGET';
       }
       return 'HOME';
     });
@@ -903,8 +905,12 @@
       const handleHashChange = () => {
         if (window.location.hash) {
           const h = window.location.hash.replace('#', '').toUpperCase();
-          if (['HOME', 'TRANSACTIONS', 'GOALS', 'BUDGET', 'REPORTS', 'MORE', 'FIXED_PAYMENTS'].includes(h)) {
+          if (['HOME', 'TRANSACTIONS', 'BUDGET', 'SETTINGS'].includes(h)) {
             setActiveTab(h);
+          } else if (['MORE', 'FIXED_PAYMENTS'].includes(h)) {
+            setActiveTab('SETTINGS');
+          } else if (['GOALS', 'REPORTS'].includes(h)) {
+            setActiveTab('BUDGET');
           }
         }
       };
@@ -912,13 +918,13 @@
       return () => window.removeEventListener('hashchange', handleHashChange);
     }, []);
 
-    // Calendar & Date Selection States (Requirements #1 - #12)
+    // Calendar & Date Selection States
     const [calYear, setCalYear] = useState(currentYear);
     const [calMonth, setCalMonth] = useState(currentMonthNum);
     const [selectedDate, setSelectedDate] = useState(() => {
       return `${currentYear}-${currentMonthStr}-${pad(now.getDate())}`;
     });
-    const [dateFilterMode, setDateFilterMode] = useState('CALENDAR'); // 'CALENDAR', 'TODAY', 'YESTERDAY', 'THIS_WEEK', 'THIS_MONTH', 'ALL'
+    const [dateFilterMode, setDateFilterMode] = useState('ALL'); // 'ALL' or 'CALENDAR'
     const touchStartRef = useRef(0);
 
     // Modals & UI States
@@ -940,6 +946,8 @@
     const [isAddAccountOpen, setIsAddAccountOpen] = useState(false);
     const [isAddRecurringOpen, setIsAddRecurringOpen] = useState(false);
     const [editingRecurring, setEditingRecurring] = useState(null);
+    const [isSmsPasteOpen, setIsSmsPasteOpen] = useState(false);
+    const [isManageCategoriesOpen, setIsManageCategoriesOpen] = useState(false);
 
     // Online / Offline State (Requirement #9)
     const [isOnline, setIsOnline] = useState(navigator.onLine);
@@ -1249,6 +1257,84 @@
         showToast(`Auto-recorded ${newTxnsToInsert.length} due recurring transaction(s)!`);
       }
     }, []);
+
+    // Native Android SMS & Real-Time Financial Alerts Listener (Requirement #13)
+    useEffect(() => {
+      if (typeof window !== 'undefined' && window.AndroidSmsBridge && typeof window.AndroidSmsBridge.onSmsReceived === 'function') {
+        const unsub = window.AndroidSmsBridge.onSmsReceived((smsEvent) => {
+          try {
+            const body = smsEvent.body || smsEvent.message || smsEvent.text;
+            if (!body || typeof window.SmsTransactionParser === 'undefined') return;
+            const parsed = window.SmsTransactionParser.parseSms(body);
+            if (parsed && parsed.isFinancial && !parsed.isIgnored && parsed.amount > 0) {
+              const isDup = transactionsRef.current.some((t) =>
+                (parsed.transactionReference && t.notes && t.notes.includes(parsed.transactionReference)) ||
+                (t.date === parsed.transactionDate && Math.abs(t.amount - parsed.amount) < 0.01 && t.description === parsed.merchant)
+              );
+              if (!isDup) {
+                const newTxn = {
+                  id: 'txn-sms-' + Date.now(),
+                  source: 'SMS',
+                  type: parsed.type || 'EXPENSE',
+                  amount: parsed.amount,
+                  categoryId: parsed.categoryId || 'cat-other-exp',
+                  categoryName: parsed.categoryName || 'Other',
+                  categoryIcon: parsed.categoryIcon || '📦',
+                  categoryColor: '#00f59b',
+                  date: parsed.transactionDate,
+                  time: parsed.transactionTime,
+                  paymentMethod: parsed.paymentMethod || 'UPI',
+                  description: parsed.merchant || 'SMS Transaction',
+                  notes: parsed.transactionReference ? `Ref: ${parsed.transactionReference}` : '',
+                  createdAt: new Date().toISOString()
+                };
+                setTransactions((prev) => [newTxn, ...prev]);
+                showToast(`📱 SMS Recorded: ${parsed.merchant} (${formatCurrency(parsed.amount, profile.currency)})`);
+              }
+            }
+          } catch (err) {
+            console.warn('[SMS Auto-Tracking] Error processing SMS:', err);
+          }
+        });
+        return () => unsub && unsub();
+      }
+    }, [showToast, profile.currency]);
+
+    const handleImportParsedSms = (parsed) => {
+      const isDup = transactions.some((t) =>
+        (parsed.transactionReference && t.notes && t.notes.includes(parsed.transactionReference)) ||
+        (t.date === parsed.transactionDate && Math.abs(t.amount - parsed.amount) < 0.01 && t.description === parsed.merchant)
+      );
+      if (isDup) {
+        alert('This SMS transaction has already been recorded.');
+        return;
+      }
+      const newTxn = {
+        id: 'txn-sms-' + Date.now(),
+        source: 'SMS',
+        type: parsed.type || 'EXPENSE',
+        amount: parsed.amount,
+        categoryId: parsed.categoryId || 'cat-other-exp',
+        categoryName: parsed.categoryName || 'Other',
+        categoryIcon: parsed.categoryIcon || '📦',
+        categoryColor: '#00f59b',
+        date: parsed.transactionDate,
+        time: parsed.transactionTime,
+        paymentMethod: parsed.paymentMethod || 'UPI',
+        description: parsed.merchant || 'SMS Transaction',
+        notes: parsed.transactionReference ? `Ref: ${parsed.transactionReference}` : '',
+        createdAt: new Date().toISOString()
+      };
+      setTransactions((prev) => [newTxn, ...prev]);
+      setIsSmsPasteOpen(false);
+      showToast(`Recorded: ${newTxn.description} (${formatCurrency(newTxn.amount, profile.currency)})`);
+    };
+
+    const handleAddCategory = (newCat) => {
+      setCategories((prev) => [...prev, newCat]);
+      showToast(`Category added: ${newCat.name}`);
+      setIsManageCategoriesOpen(false);
+    };
 
     // Month Navigation Handlers
     const handlePrevMonth = () => {
@@ -1831,242 +1917,108 @@
     // 1. HOME VIEW (Requirement #1)
     // =========================================================================
     const renderHomeView = () => {
-      const recentTxns = transactions.slice(0, 5);
+      const recentTxns = transactions.slice(0, 8);
+      const totalAccountBalance = accounts.reduce((acc, a) => acc + (Number(a.balance) || 0), 0);
+      const displayBalance = totalAccountBalance > 0 ? totalAccountBalance : stats.availableBalance;
+      const remaining = safeRound(stats.income - stats.expenses);
 
       return h('div', { className: 'page-view' },
-        // Main Available Balance Card
+        // 1. Balance Hero Card (How much money do I have?)
         h('div', { className: 'balance-card' },
           h('div', { className: 'balance-header' },
-            h('span', { className: 'balance-label' }, 'AVAILABLE BALANCE'),
-            h('span', { className: 'savings-badge' }, `${stats.savingsPct}% Saved`)
+            h('span', { className: 'balance-label' }, 'TOTAL BALANCE'),
+            h('span', { className: 'savings-badge' }, `${getMonthName(viewMonth - 1).slice(0, 3)} ${viewYear}`)
           ),
-          h('div', { className: 'balance-amount' }, formatCurrency(stats.availableBalance, profile.currency)),
+          h('div', { className: 'balance-amount' }, formatCurrency(displayBalance, profile.currency)),
           h('div', { className: 'balance-sub' },
-            'OF ',
-            h('span', null, formatCurrency(stats.income, profile.currency)),
-            ' INCOME'
+            'Available Funds · ',
+            h('span', null, `${transactions.length} transactions recorded`)
           )
         ),
 
-        // SAFE TO SPEND CARD (Requirement #1 & #10)
-        h('div', { className: `safe-spend-card ${stats.safeToSpend.status}` },
-          h('div', { className: 'safe-spend-top' },
-            h('div', { className: 'safe-spend-label' },
-              h('span', null, '🛡️'),
-              'SAFE TO SPEND'
-            ),
-            h('span', { className: `safe-spend-status-pill ${stats.safeToSpend.status}` },
-              stats.safeToSpend.status === 'healthy' ? '✓ On Track' : stats.safeToSpend.status === 'warning' ? '⚠️ Caution' : '🚨 Risky'
-            )
-          ),
-          h('div', { className: 'safe-spend-rate' },
-            formatCurrency(stats.safeToSpend.daily, profile.currency),
-            h('span', null, ' / day')
-          ),
-          h('div', { className: 'safe-spend-message' },
-            stats.safeToSpend.message
-          )
-        ),
-
-        // Three Compact KPI Cards: INCOME | EXPENSES | SAVINGS
+        // 2. Clean 3-Card Monthly Summary: INCOME | EXPENSES | REMAINING
         h('div', { className: 'tri-card-grid' },
           h('div', { className: 'mini-kpi-card' },
             h('div', { className: 'mini-kpi-label' }, 'INCOME'),
-            h('div', { className: 'mini-kpi-value income' }, formatCurrency(stats.income, profile.currency))
+            h('div', { className: 'mini-kpi-value income' }, `+${formatCurrency(stats.income, profile.currency)}`)
           ),
           h('div', { className: 'mini-kpi-card' },
             h('div', { className: 'mini-kpi-label' }, 'EXPENSES'),
-            h('div', { className: 'mini-kpi-value expense' }, formatCurrency(stats.expenses, profile.currency))
+            h('div', { className: 'mini-kpi-value expense' }, `-${formatCurrency(stats.expenses, profile.currency)}`)
           ),
           h('div', { className: 'mini-kpi-card' },
-            h('div', { className: 'mini-kpi-label' }, 'SAVINGS'),
-            h('div', { className: 'mini-kpi-value savings' }, formatCurrency(stats.savings, profile.currency))
+            h('div', { className: 'mini-kpi-label' }, 'REMAINING'),
+            h('div', { className: `mini-kpi-value ${remaining >= 0 ? 'savings' : 'expense'}` }, formatCurrency(remaining, profile.currency))
           )
         ),
 
-        // UPCOMING BILLS / PAYMENTS WIDGET (Requirement #1 & #8)
-        h('div', { className: 'upcoming-section' },
-          h('div', { className: 'upcoming-header' },
-            h('div', { className: 'upcoming-title' },
-              h('span', null, '📅'),
-              ' UPCOMING BILLS'
-            ),
-            h('button', {
-              type: 'button',
-              className: 'upcoming-view-all',
-              onClick: () => setActiveTab('FIXED_PAYMENTS')
-            }, 'View all →')
-          ),
-          stats.upcomingPayments.length === 0
-            ? h('div', { style: { fontSize: '12.5px', color: 'var(--text-dim)', padding: '6px 0' } },
-                'All recurring bills for this month are settled! 🎉'
-              )
-            : h('div', { className: 'upcoming-list' },
-                stats.upcomingPayments.map((p) => {
-                  const cat = categories.find((c) => c.id === p.categoryId) || { icon: '💳' };
-                  return h('div', {
-                    key: p.id,
-                    className: 'upcoming-item',
-                    style: { cursor: 'pointer' },
-                    title: 'Tap to edit obligation',
-                    onClick: () => {
-                      setEditingRecurring(p);
-                      setIsAddRecurringOpen(true);
-                    }
-                  },
-                    h('div', { className: 'upcoming-item-left' },
-                      h('div', { className: 'upcoming-item-icon' }, cat.icon),
-                      h('div', null,
-                        h('div', { className: 'upcoming-item-name' }, p.name),
-                        h('div', { className: 'upcoming-item-date' }, `Due on ${getMonthName(viewMonth - 1).slice(0, 3)} ${p.dueDay}`)
-                      )
-                    ),
-                    h('div', { className: 'upcoming-item-amount' }, formatCurrency(p.amount, profile.currency))
-                  );
-                })
-              )
+        // 3. Prominent Add Button Callout
+        h('button', {
+          type: 'button',
+          className: 'prominent-add-btn',
+          onClick: () => {
+            setEditingTxn(null);
+            setIsAddTxnOpen(true);
+          }
+        },
+          h('span', null, '➕'),
+          'Add Expense / Income'
         ),
 
-        // Dual Mini Bar: Today's Spending & Monthly Budget
-        h('div', { className: 'dual-stat-grid' },
-          h('div', { className: 'stat-widget' },
-            h('div', { className: 'widget-header' },
-              h('span', { className: 'widget-label' }, "TODAY'S SPENDING"),
-              h('span', { style: { fontSize: '11px', color: 'var(--text-dim)' } }, '⚡ Live')
-            ),
-            h('div', { className: 'widget-value' }, formatCurrency(stats.todaySpend, profile.currency)),
-            h('div', { className: 'widget-sub' }, `${stats.todayCount} transaction${stats.todayCount === 1 ? '' : 's'}`)
+        // 4. Recent Transactions List (What did I spend recently?)
+        h('div', { className: 'section-header' },
+          h('div', { className: 'section-title' },
+            h('span', null, '⚡'),
+            ' Recent Transactions'
           ),
-          h('div', { className: 'stat-widget' },
-            h('div', { className: 'widget-header' },
-              h('span', { className: 'widget-label' }, 'MONTHLY BUDGET'),
-              h('span', { style: { fontSize: '11px', color: 'var(--neon-green)', fontWeight: 700 } }, `${stats.budgetUsedPct}% used`)
-            ),
-            h('div', { className: 'widget-value' }, `${formatCurrency(stats.expenses, profile.currency)} / ${formatCurrency(monthlyBudgetLimit, profile.currency)}`),
-            h('div', { className: 'budget-bar-track' },
-              h('div', {
-                className: `budget-bar-fill ${stats.budgetUsedPct > 100 ? 'overspent' : stats.budgetUsedPct > 85 ? 'warning' : 'healthy'}`,
-                style: { width: `${Math.min(100, stats.budgetUsedPct)}%` }
+          h('button', {
+            type: 'button',
+            className: 'today-jump-btn',
+            onClick: () => setActiveTab('TRANSACTIONS')
+          }, 'View All →')
+        ),
+
+        recentTxns.length === 0
+          ? h('div', { className: 'empty-state-box' },
+              h('div', { className: 'empty-icon' }, '📋'),
+              h('div', { className: 'empty-title' }, 'No transactions recorded yet'),
+              h('p', { className: 'empty-desc' }, 'Tap the + button to record your first expense or income.')
+            )
+          : h('div', { className: 'txn-list' },
+              recentTxns.map((t) => {
+                const isInc = t.type === 'INCOME';
+                const cat = categories.find((c) => c.id === t.categoryId) || { icon: t.categoryIcon || '📦', name: t.categoryName || 'Other' };
+                return h('div', {
+                  key: t.id,
+                  className: 'txn-card',
+                  style: { cursor: 'pointer' },
+                  title: 'Tap to edit transaction',
+                  onClick: () => {
+                    setEditingTxn(t);
+                    setIsAddTxnOpen(true);
+                  }
+                },
+                  h('div', { className: 'txn-left' },
+                    h('div', { className: 'txn-cat-icon' }, cat.icon || '📦'),
+                    h('div', { className: 'txn-details' },
+                      h('div', { className: 'txn-desc' }, t.description || cat.name),
+                      h('div', { className: 'txn-meta' },
+                        h('span', null, formatFullDate(t.date).shortFormatted),
+                        t.time ? h('span', null, `· ${formatTimeAMPM(t.time)}`) : null,
+                        h('span', { className: 'txn-pill' }, t.paymentMethod || 'UPI'),
+                        t.source === 'SMS' ? h('span', { className: 'txn-pill', style: { color: 'var(--neon-green)' } }, '📱 SMS') : null
+                      )
+                    )
+                  ),
+                  h('div', { className: 'txn-right' },
+                    h('div', { className: `txn-amount ${isInc ? 'income' : 'expense'}` },
+                      `${isInc ? '+' : '-'}${formatCurrency(t.amount, profile.currency)}`
+                    ),
+                    h('span', { style: { fontSize: '11px', color: 'var(--text-dim)', marginTop: '2px' } }, cat.name)
+                  )
+                );
               })
             )
-          )
-        ),
-
-        // Spending by Category Donut Chart
-        h('div', { className: 'donut-section-card' },
-          h('div', { className: 'section-header', style: { margin: '0 0 16px 0' } },
-            h('div', { className: 'section-title' },
-              h('span', null, '📊'),
-              " This Month's Spending"
-            ),
-            h('span', { style: { fontSize: '12px', color: 'var(--text-dim)' } }, `Total: ${formatCurrency(categoryBreakdown.total, profile.currency)}`)
-          ),
-          categoryBreakdown.list.length === 0
-            ? h('div', { className: 'empty-state', style: { padding: '20px' } },
-                h('div', { className: 'empty-desc' }, 'No expenses logged for this month yet.')
-              )
-            : h('div', { className: 'donut-layout' },
-                h('div', { className: 'donut-svg-wrap' },
-                  h('svg', { viewBox: '0 0 36 36', style: { width: '100%', height: '100%', transform: 'rotate(-90deg)' } },
-                    h('circle', {
-                      cx: '18',
-                      cy: '18',
-                      r: '15.9155',
-                      fill: 'none',
-                      stroke: 'rgba(255, 255, 255, 0.06)',
-                      strokeWidth: '3.8'
-                    }),
-                    (() => {
-                      let accumulated = 0;
-                      return categoryBreakdown.list.slice(0, 5).map((cat) => {
-                        const dasharray = `${cat.percentage} ${100 - cat.percentage}`;
-                        const offset = 100 - accumulated;
-                        accumulated += cat.percentage;
-                        return h('circle', {
-                          key: cat.id,
-                          cx: '18',
-                          cy: '18',
-                          r: '15.9155',
-                          fill: 'none',
-                          stroke: cat.color,
-                          strokeWidth: '3.8',
-                          strokeDasharray: dasharray,
-                          strokeDashoffset: offset
-                        });
-                      });
-                    })()
-                  ),
-                  h('div', { className: 'donut-center-info' },
-                    h('div', { className: 'donut-center-val' }, `${categoryBreakdown.list.length}`),
-                    h('div', { className: 'donut-center-lbl' }, 'Categories')
-                  )
-                ),
-                h('div', { className: 'donut-legend-list' },
-                  categoryBreakdown.list.slice(0, 5).map((cat) =>
-                    h('div', { key: cat.id, className: 'legend-item' },
-                      h('div', { className: 'legend-item-left' },
-                        h('span', { className: 'legend-color-dot', style: { background: cat.color } }),
-                        h('span', null, `${cat.icon} ${cat.name}`)
-                      ),
-                      h('div', { className: 'legend-item-right' },
-                        h('span', null, formatCurrency(cat.amount, profile.currency)),
-                        h('span', { className: 'legend-pct' }, `${cat.percentage}%`)
-                      )
-                    )
-                  )
-                )
-              )
-        ),
-
-        // Recent Transactions (Latest 4–5)
-        h('div', null,
-          h('div', { className: 'section-header' },
-            h('div', { className: 'section-title' },
-              h('span', null, '🕒'),
-              ' Recent Transactions'
-            ),
-            h('button', {
-              type: 'button',
-              className: 'today-jump-btn',
-              onClick: () => setActiveTab('TRANSACTIONS')
-            }, 'View All ›')
-          ),
-          recentTxns.length === 0
-            ? h('div', { className: 'empty-state' },
-                h('span', { className: 'empty-icon' }, '📝'),
-                h('div', { className: 'empty-title' }, 'No transactions yet'),
-                h('div', { className: 'empty-desc' }, 'Tap the + button to record your first income or expense.')
-              )
-            : h('div', { className: 'txn-list' },
-                recentTxns.map((t) =>
-                  h('div', { key: t.id, className: 'txn-card' },
-                    h('div', { className: 'txn-left' },
-                      h('div', { className: 'txn-cat-icon' }, t.categoryIcon || '📦'),
-                      h('div', { className: 'txn-details' },
-                        h('div', { className: 'txn-desc' }, t.description),
-                        h('div', { className: 'txn-meta' },
-                          h('span', { className: 'txn-pill' }, t.categoryName || 'Other'),
-                          h('span', { className: 'txn-pill' }, t.paymentMethod || 'UPI'),
-                          t.isRecurring ? h('span', { className: 'txn-pill', style: { color: 'var(--neon-green)' } }, '🔄 Recurring') : null
-                        )
-                      )
-                    ),
-                    h('div', { className: 'txn-right' },
-                      h('div', { className: `txn-amount ${t.type.toLowerCase()}` },
-                        `${t.type === 'INCOME' ? '+' : '-'}${formatCurrency(t.amount, profile.currency)}`
-                      ),
-                      h('div', { className: 'txn-date-time' }, t.date),
-                      h('button', {
-                        type: 'button',
-                        className: 'txn-more-btn',
-                        title: 'Actions',
-                        onClick: () => setActiveTxnForMenu(t)
-                      }, '⋯')
-                    )
-                  )
-                )
-              )
-        )
       );
     };
 
@@ -2078,11 +2030,11 @@
       const filtered = displayedTxns;
 
       return h('div', { className: 'page-view' },
-        // Top Header
+        // Top Section Header
         h('div', { className: 'section-header' },
           h('div', { className: 'section-title' },
-            h('span', null, '📅'),
-            ` Calendar & Financial Log`
+            h('span', null, '📋'),
+            ' Transactions'
           ),
           h('button', {
             type: 'button',
@@ -2091,64 +2043,8 @@
               setEditingTxn(null);
               setIsAddTxnOpen(true);
             }
-          }, '➕ New')
+          }, '➕ Add')
         ),
-
-        // Quick Date Filter Chips Banner (Requirement #9)
-        h('div', { className: 'quick-date-chips-wrap' },
-          h('button', {
-            type: 'button',
-            className: `quick-date-chip ${dateFilterMode === 'CALENDAR' ? 'active' : ''}`,
-            onClick: () => {
-              setDateFilterMode('CALENDAR');
-              setIsDayDetailsOpen(true);
-            }
-          }, `📅 ${selectedDateInfo.shortFormatted}`),
-          h('button', {
-            type: 'button',
-            className: `quick-date-chip ${dateFilterMode === 'TODAY' ? 'active' : ''}`,
-            onClick: () => {
-              const todayDateStr = `${currentYear}-${currentMonthStr}-${pad(now.getDate())}`;
-              setSelectedDate(todayDateStr);
-              setCalYear(currentYear);
-              setCalMonth(currentMonthNum);
-              setDateFilterMode('TODAY');
-            }
-          }, '⚡ Today'),
-          h('button', {
-            type: 'button',
-            className: `quick-date-chip ${dateFilterMode === 'YESTERDAY' ? 'active' : ''}`,
-            onClick: () => {
-              const yDate = new Date();
-              yDate.setDate(yDate.getDate() - 1);
-              const yStr = `${yDate.getFullYear()}-${pad(yDate.getMonth() + 1)}-${pad(yDate.getDate())}`;
-              setSelectedDate(yStr);
-              setCalYear(yDate.getFullYear());
-              setCalMonth(yDate.getMonth() + 1);
-              setDateFilterMode('YESTERDAY');
-            }
-          }, '⏮️ Yesterday'),
-          h('button', {
-            type: 'button',
-            className: `quick-date-chip ${dateFilterMode === 'THIS_WEEK' ? 'active' : ''}`,
-            onClick: () => setDateFilterMode('THIS_WEEK')
-          }, '📆 This Week'),
-          h('button', {
-            type: 'button',
-            className: `quick-date-chip ${dateFilterMode === 'THIS_MONTH' ? 'active' : ''}`,
-            onClick: () => setDateFilterMode('THIS_MONTH')
-          }, '🗓️ This Month'),
-          h('button', {
-            type: 'button',
-            className: `quick-date-chip ${dateFilterMode === 'ALL' ? 'active' : ''}`,
-            onClick: () => setDateFilterMode('ALL')
-          }, '📋 All Records')
-        ),
-
-        // Desktop 2-Column or Mobile Stacked Flow (Requirements #11 & #12)
-        h('div', { className: 'transactions-desktop-layout' },
-          // Left Column: Interactive Calendar + Search Filters
-          h('div', null,
             // Interactive Calendar Card (Requirement #1 & #10)
             h('div', {
               className: 'calendar-card',
@@ -2220,186 +2116,100 @@
                   );
                 })
               )
-            ),
+        ),
 
-            // Search & Filters Bar
-            h('div', { className: 'filter-bar' },
-              h('div', { className: 'search-input-wrap' },
-                h('span', { className: 'search-icon' }, '🔍'),
-                h('input', {
-                  type: 'text',
-                  className: 'search-input',
-                  placeholder: 'Search merchant, note, category, amount...',
-                  value: txnSearch,
-                  onChange: (e) => setTxnSearch(e.target.value)
-                })
+        // 2. Selected Date Summary Banner (appears when a specific date is clicked)
+        dateFilterMode === 'CALENDAR'
+          ? h('div', { className: 'selected-date-banner' },
+              h('div', { className: 'date-summary-text' },
+                h('span', { style: { color: 'var(--neon-green)' } }, `📅 ${selectedDateInfo.formatted}`),
+                h('span', { className: 'date-summary-tag' }, `· +${formatCurrency(dateStats.income, profile.currency)}`),
+                h('span', { className: 'date-summary-tag' }, `· -${formatCurrency(dateStats.expenses, profile.currency)}`),
+                h('span', { className: 'date-summary-tag' }, `· Net: ${formatCurrency(dateStats.net, profile.currency)}`)
               ),
-              h('select', {
-                className: 'filter-select',
-                value: txnTypeFilter,
-                onChange: (e) => setTxnTypeFilter(e.target.value)
-              },
-                h('option', { value: 'ALL' }, 'All Types'),
-                h('option', { value: 'EXPENSE' }, 'Expenses'),
-                h('option', { value: 'INCOME' }, 'Income'),
-                h('option', { value: 'REFUND' }, 'Refunds'),
-                h('option', { value: 'FUND_CONTRIBUTION' }, 'Goal Allocations'),
-                h('option', { value: 'TRANSFER' }, 'Transfers')
-              ),
-              h('select', {
-                className: 'filter-select',
-                value: txnCatFilter,
-                onChange: (e) => setTxnCatFilter(e.target.value)
-              },
-                h('option', { value: 'ALL' }, 'All Categories'),
-                categories.map((c) => h('option', { key: c.id, value: c.id }, `${c.icon} ${c.name}`))
-              ),
-              h('select', {
-                className: 'filter-select',
-                value: txnSort,
-                onChange: (e) => setTxnSort(e.target.value)
-              },
-                h('option', { value: 'NEWEST' }, 'Newest First'),
-                h('option', { value: 'OLDEST' }, 'Oldest First'),
-                h('option', { value: 'HIGHEST' }, 'Highest Amount'),
-                h('option', { value: 'LOWEST' }, 'Lowest Amount')
+              h('button', {
+                type: 'button',
+                className: 'clear-date-btn',
+                onClick: () => setDateFilterMode('ALL')
+              }, '✕ Show All Dates')
+            )
+          : null,
+
+        // 3. Search Bar
+        h('div', { className: 'search-input-wrap', style: { marginBottom: '12px' } },
+          h('span', { className: 'search-icon' }, '🔍'),
+          h('input', {
+            type: 'text',
+            className: 'search-input',
+            placeholder: 'Search merchant, note, amount...',
+            value: txnSearch,
+            onChange: (e) => setTxnSearch(e.target.value)
+          })
+        ),
+
+        // 4. Simple 3 Filter Pills: ALL | EXPENSE | INCOME
+        h('div', { className: 'simple-filter-pills' },
+          [
+            { id: 'ALL', label: 'All' },
+            { id: 'EXPENSE', label: 'Expenses' },
+            { id: 'INCOME', label: 'Income' }
+          ].map((f) =>
+            h('button', {
+              key: f.id,
+              type: 'button',
+              className: `filter-pill-btn ${txnTypeFilter === f.id ? `active ${f.id.toLowerCase()}` : ''}`,
+              onClick: () => setTxnTypeFilter(f.id)
+            }, f.label)
+          )
+        ),
+
+        // 5. Clean Transactions List (Tap card to edit)
+        displayedTxns.length === 0
+          ? h('div', { className: 'empty-state-box' },
+              h('div', { className: 'empty-icon' }, '🔍'),
+              h('div', { className: 'empty-title' }, 'No transactions found'),
+              h('p', { className: 'empty-desc' },
+                dateFilterMode === 'CALENDAR'
+                  ? `No activity on ${selectedDateInfo.shortFormatted}. Tap + to record an entry.`
+                  : 'No transactions match the selected filters.'
               )
             )
-          ),
-
-          // Right Column: Selected Date Summary + Daily Transactions List (Requirement #2 & #3)
-          h('div', null,
-            // Selected Date Summary Card
-            h('div', { className: 'date-summary-card' },
-              h('div', { className: 'date-summary-header' },
-                h('div', {
-                  className: 'date-summary-title clickable',
-                  title: 'Click to open day edit options',
-                  onClick: () => setIsDayDetailsOpen(true)
-                },
-                  h('span', null, '📅'),
-                  ` Selected Date: ${selectedDateInfo.formatted}`
-                ),
-                h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px' } },
-                  h('div', { className: 'date-summary-weekday' }, selectedDateInfo.weekday),
-                  h('button', {
-                    type: 'button',
-                    className: 'edit-day-btn',
-                    title: 'Edit details for this day',
-                    onClick: (e) => {
-                      e.stopPropagation();
-                      setIsDayDetailsOpen(true);
-                    }
-                  }, '✏️ Edit Day')
-                )
-              ),
-              h('div', { className: 'date-summary-metrics' },
-                h('div', { className: 'date-metric-item' },
-                  h('span', { className: 'date-metric-label' }, 'Income'),
-                  h('span', { className: 'date-metric-value income' }, `+${formatCurrency(dateStats.income, profile.currency)}`)
-                ),
-                h('div', { className: 'date-metric-item' },
-                  h('span', { className: 'date-metric-label' }, 'Expenses'),
-                  h('span', { className: 'date-metric-value expense' }, formatCurrency(dateStats.expenses, profile.currency))
-                ),
-                h('div', { className: 'date-metric-item' },
-                  h('span', { className: 'date-metric-label' }, 'Net'),
-                  h('span', {
-                    className: `date-metric-value ${dateStats.net > 0 ? 'net-positive' : dateStats.net < 0 ? 'net-negative' : 'net-zero'}`
-                  }, `${dateStats.net > 0 ? '+' : ''}${formatCurrency(dateStats.net, profile.currency)}`)
-                )
-              )
-            ),
-
-            // Date Transaction List (Requirement #3)
-            h('div', { className: 'section-header', style: { marginTop: '10px' } },
-              h('div', { className: 'section-title', style: { fontSize: '14px' } },
-                h('span', null, '📋'),
-                ` Transactions (${filtered.length})`
-              ),
-              h('div', { style: { display: 'flex', gap: '6px' } },
-                h('button', {
-                  type: 'button',
-                  className: 'edit-day-btn',
-                  title: 'Open day editor and options',
-                  onClick: () => setIsDayDetailsOpen(true)
-                }, '✏️ Edit Day'),
-                h('button', {
-                  type: 'button',
-                  className: 'today-jump-btn',
+          : h('div', { className: 'txn-list' },
+              displayedTxns.map((t) => {
+                const isInc = t.type === 'INCOME';
+                const cat = categories.find((c) => c.id === t.categoryId) || { icon: t.categoryIcon || '📦', name: t.categoryName || 'Other' };
+                return h('div', {
+                  key: t.id,
+                  className: 'txn-card',
+                  style: { cursor: 'pointer' },
+                  title: 'Tap to edit transaction',
                   onClick: () => {
-                    setEditingTxn(null);
+                    setEditingTxn(t);
                     setIsAddTxnOpen(true);
                   }
-                }, '+ Add')
-              )
-            ),
-
-            filtered.length === 0
-              ? h('div', { className: 'empty-state' },
-                  h('span', { className: 'empty-icon' }, '📅'),
-                  h('div', { className: 'empty-title' }, `No transactions on ${selectedDateInfo.formatted}`),
-                  h('div', { className: 'empty-desc' }, 'No financial activities recorded for this date.'),
-                  h('button', {
-                    type: 'button',
-                    className: 'submit-btn',
-                    style: { marginTop: '12px', fontSize: '13px', padding: '10px 16px' },
-                    onClick: () => {
-                      setEditingTxn(null);
-                      setIsAddTxnOpen(true);
-                    }
-                  }, '➕ Log Transaction for this Date')
-                )
-              : h('div', { className: 'txn-list' },
-                  filtered.map((t) =>
-                    h('div', {
-                      key: t.id,
-                      className: 'txn-card clickable',
-                      title: 'Click to edit transaction',
-                      onClick: () => {
-                        setEditingTxn(t);
-                        setIsAddTxnOpen(true);
-                      }
-                    },
-                      h('div', { className: 'txn-left' },
-                        h('div', { className: 'txn-cat-icon' }, t.categoryIcon || '📦'),
-                        h('div', { className: 'txn-details' },
-                          h('div', { className: 'txn-desc' }, t.description),
-                          h('div', { className: 'txn-meta' },
-                            h('span', { className: 'txn-pill' }, t.categoryName || 'Other'),
-                            h('span', { className: 'txn-pill' }, t.paymentMethod || 'UPI'),
-                            t.time ? h('span', { className: 'txn-pill' }, formatTimeAMPM(t.time)) : null,
-                            t.source === 'SMS'
-                              ? h('span', { className: 'source-badge sms' }, '📱 SMS' + (t.isEdited ? ' · Edited' : ''))
-                              : t.source === 'IMPORT'
-                              ? h('span', { className: 'source-badge import' }, '📥 Import')
-                              : t.isRecurring
-                              ? h('span', { className: 'source-badge recurring' }, '🔄 Auto')
-                              : h('span', { className: 'source-badge manual' }, '✏️ Manual')
-                          ),
-                          t.notes ? h('div', { style: { fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' } }, t.notes) : null
-                        )
+                },
+                  h('div', { className: 'txn-left' },
+                    h('div', { className: 'txn-cat-icon' }, cat.icon || '📦'),
+                    h('div', { className: 'txn-details' },
+                      h('div', { className: 'txn-desc' }, t.description || cat.name),
+                      h('div', { className: 'txn-meta' },
+                        h('span', null, formatFullDate(t.date).shortFormatted),
+                        t.time ? h('span', null, `· ${formatTimeAMPM(t.time)}`) : null,
+                        h('span', { className: 'txn-pill' }, t.paymentMethod || 'UPI'),
+                        t.source === 'SMS' ? h('span', { className: 'txn-pill', style: { color: 'var(--neon-green)' } }, '📱 SMS') : null
                       ),
-                      h('div', { className: 'txn-right' },
-                        h('div', { className: `txn-amount ${t.type.toLowerCase()}` },
-                          `${t.type === 'INCOME' ? '+' : '-'}${formatCurrency(t.amount, profile.currency)}`
-                        ),
-                        h('div', { className: 'txn-date-time' }, `${t.date} ${t.time ? formatTimeAMPM(t.time) : ''}`),
-                        h('button', {
-                          type: 'button',
-                          className: 'txn-more-btn',
-                          title: 'More actions',
-                          onClick: (e) => {
-                            e.stopPropagation();
-                            setActiveTxnForMenu(t);
-                          }
-                        }, '⋯')
-                      )
+                      t.notes ? h('div', { style: { fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' } }, t.notes) : null
                     )
+                  ),
+                  h('div', { className: 'txn-right' },
+                    h('div', { className: `txn-amount ${isInc ? 'income' : 'expense'}` },
+                      `${isInc ? '+' : '-'}${formatCurrency(t.amount, profile.currency)}`
+                    ),
+                    h('span', { style: { fontSize: '11px', color: 'var(--text-dim)', marginTop: '2px' } }, cat.name)
                   )
-                )
-          )
-        )
+                );
+              })
+            )
       );
     };
 
@@ -2559,109 +2369,112 @@
     // 4. BUDGET VIEW WITH FORECASTING (Requirement #5 & #11)
     // =========================================================================
     const renderBudgetView = () => {
+      // Calculate breakdown of spending by category for the current month
+      const currentMonthPrefix = `${calYear}-${pad(calMonth)}`;
+      const monthExpenses = transactions.filter((t) => t.type === 'EXPENSE' && t.date && t.date.startsWith(currentMonthPrefix));
+      const totalMonthSpent = safeRound(monthExpenses.reduce((sum, t) => sum + (t.amount || 0), 0));
+      const budgetRemaining = safeRound(Math.max(0, monthlyBudgetLimit - totalMonthSpent));
+      const budgetUsedPct = monthlyBudgetLimit > 0 ? safeRound((totalMonthSpent / monthlyBudgetLimit) * 100) : 0;
+
+      // Group spending by category
+      const catSpentMap = {};
+      monthExpenses.forEach((t) => {
+        const cid = t.categoryId || 'cat-other-exp';
+        catSpentMap[cid] = (catSpentMap[cid] || 0) + (t.amount || 0);
+      });
+
+      // Show categories that have either budget limits or spending
+      const relevantCats = categories
+        .filter((c) => c.type === 'EXPENSE')
+        .map((c) => {
+          const spent = safeRound(catSpentMap[c.id] || 0);
+          const budgetItem = categoryBudgets.find((cb) => cb.categoryId === c.id);
+          const limit = budgetItem ? budgetItem.limitAmount : 0;
+          const pct = limit > 0 ? safeRound((spent / limit) * 100) : 0;
+          return { ...c, spent, limit, pct };
+        })
+        .filter((c) => c.spent > 0 || c.limit > 0)
+        .sort((a, b) => b.spent - a.spent);
+
       return h('div', { className: 'page-view' },
+        // Header
         h('div', { className: 'section-header' },
           h('div', { className: 'section-title' },
-            h('span', null, '🎯'),
-            ` Monthly Spending Limits (${getMonthName(viewMonth - 1)} ${viewYear})`
+            h('span', null, '📊'),
+            ` Budget (${getMonthName(calMonth - 1)} ${calYear})`
           ),
           h('button', {
             type: 'button',
             className: 'today-jump-btn',
             onClick: () => setIsCatBudgetModalOpen(true)
-          }, '➕ Category Budget')
+          }, '✏️ Edit Limits')
         ),
 
-        // Budget Forecasting Card (Requirement #5)
-        h('div', { className: 'forecast-card' },
-          h('div', { className: 'forecast-header' },
-            h('div', { className: 'forecast-title' },
-              h('span', null, '🔮 '),
-              'BUDGET FORECASTING'
-            ),
-            h('span', {
-              className: `forecast-status-badge ${stats.forecast.status.toLowerCase().replace(/\s+/g, '-')}`
-            }, stats.forecast.status)
-          ),
-          h('div', { className: 'forecast-values' },
-            h('div', { className: 'forecast-proj-amount' },
-              formatCurrency(stats.forecast.projectedTotal, profile.currency)
-            ),
-            h('div', { className: 'forecast-sub' }, 'Projected Month-End Spend')
-          ),
-          h('div', { style: { fontSize: '13px', color: stats.forecast.isLikelyToExceed ? 'var(--overspent-red)' : 'var(--neon-green)', fontWeight: 700 } },
-            stats.forecast.isLikelyToExceed
-              ? `⚠️ Likely to exceed monthly budget by ${formatCurrency(stats.forecast.variance, profile.currency)} based on current daily pace.`
-              : `✓ Current pace is sustainable — projected to finish within budget!`
-          )
-        ),
-
-        // Monthly Budget KPI Hero
+        // 1. Simple Monthly Budget Card
         h('div', { className: 'stat-widget', style: { marginBottom: '18px' } },
-          h('div', { className: 'dual-stat-grid', style: { marginBottom: '12px' } },
+          h('div', { className: 'tri-card-grid', style: { marginBottom: '12px' } },
             h('div', null,
-              h('div', { className: 'mini-kpi-label' }, 'TOTAL BUDGET'),
+              h('div', { className: 'mini-kpi-label' }, 'MONTHLY BUDGET'),
               h('div', { style: { fontSize: '20px', fontWeight: 900, color: '#fff' } }, formatCurrency(monthlyBudgetLimit, profile.currency))
             ),
             h('div', null,
-              h('div', { className: 'mini-kpi-label' }, 'ACTUAL SPENT'),
-              h('div', { style: { fontSize: '20px', fontWeight: 900, color: 'var(--expense-pink)' } }, formatCurrency(stats.expenses, profile.currency))
+              h('div', { className: 'mini-kpi-label' }, 'SPENT'),
+              h('div', { style: { fontSize: '20px', fontWeight: 900, color: 'var(--expense-pink)' } }, formatCurrency(totalMonthSpent, profile.currency))
             ),
             h('div', null,
               h('div', { className: 'mini-kpi-label' }, 'REMAINING'),
-              h('div', { style: { fontSize: '20px', fontWeight: 900, color: 'var(--neon-green)' } }, formatCurrency(stats.budgetRemaining, profile.currency))
-            ),
-            h('div', null,
-              h('div', { className: 'mini-kpi-label' }, 'PROGRESS'),
-              h('div', { style: { fontSize: '20px', fontWeight: 900, color: '#fff' } }, `${stats.budgetUsedPct}%`)
+              h('div', { style: { fontSize: '20px', fontWeight: 900, color: 'var(--neon-green)' } }, formatCurrency(budgetRemaining, profile.currency))
             )
           ),
           h('div', { className: 'budget-bar-track', style: { height: '10px' } },
             h('div', {
-              className: `budget-bar-fill ${stats.budgetUsedPct > 100 ? 'overspent' : stats.budgetUsedPct > 85 ? 'warning' : 'healthy'}`,
-              style: { width: `${Math.min(100, stats.budgetUsedPct)}%` }
+              className: `budget-bar-fill ${budgetUsedPct > 100 ? 'overspent' : budgetUsedPct > 85 ? 'warning' : 'healthy'}`,
+              style: { width: `${Math.min(100, budgetUsedPct)}%` }
             })
+          ),
+          h('div', { style: { display: 'flex', justifyContent: 'space-between', fontSize: '11.5px', color: 'var(--text-dim)', marginTop: '6px' } },
+            h('span', null, `${budgetUsedPct}% of budget used`),
+            h('span', null, budgetRemaining > 0 ? `${formatCurrency(budgetRemaining, profile.currency)} remaining` : 'Limit exceeded')
           )
         ),
 
-        // Category Budgets List with Projections
-        h('div', { className: 'category-budgets-grid' },
-          categoryBudgets.map((cb) => {
-            const cat = categories.find((c) => c.id === cb.categoryId) || { name: 'Category', icon: '📦', color: '#00f59b' };
-            const spent = categoryBreakdown.list.find((item) => item.id === cb.categoryId)?.amount || 0;
-            const pct = cb.limitAmount > 0 ? safeRound((spent / cb.limitAmount) * 100) : 0;
+        // 2. Simple Category Breakdown
+        h('div', { className: 'section-title', style: { fontSize: '14px', marginBottom: '12px' } },
+          'Category Breakdown'
+        ),
 
-            let statusClass = 'healthy';
-            let statusLabel = 'Healthy';
-            if (pct > 100) {
-              statusClass = 'overspent';
-              statusLabel = 'OVER BUDGET';
-            } else if (pct >= 85) {
-              statusClass = 'warning';
-              statusLabel = 'Warning';
-            }
-
-            return h('div', { key: cb.categoryId, className: 'stat-widget' },
-              h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' } },
-                h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 800, color: '#fff' } },
-                  h('span', null, cat.icon),
-                  cat.name
-                ),
-                h('span', { className: `forecast-status-badge ${statusClass}` }, `${statusLabel} (${pct}%)`)
-              ),
-              h('div', { style: { display: 'flex', justifyContent: 'space-between', fontSize: '13px', marginBottom: '8px' } },
-                h('span', { style: { color: 'var(--text-muted)' } }, 'Used / Limit:'),
-                h('strong', null, `${formatCurrency(spent, profile.currency)} / ${formatCurrency(cb.limitAmount, profile.currency)}`)
-              ),
-              h('div', { className: 'budget-bar-track' },
-                h('div', {
-                  className: `budget-bar-fill ${statusClass}`,
-                  style: { width: `${Math.min(100, pct)}%` }
-                })
-              )
-            );
-          })
-        )
+        relevantCats.length === 0
+          ? h('div', { className: 'empty-state-box' },
+              h('div', { className: 'empty-icon' }, '📊'),
+              h('div', { className: 'empty-title' }, 'No category spending yet'),
+              h('p', { className: 'empty-desc' }, 'Recorded expenses for this month will appear here with progress bars.')
+            )
+          : h('div', null,
+              relevantCats.map((cat) => {
+                const statusClass = cat.pct > 100 ? 'overspent' : cat.pct >= 85 ? 'warning' : 'healthy';
+                return h('div', { key: cat.id, className: 'budget-breakdown-item' },
+                  h('div', { className: 'budget-item-header' },
+                    h('div', { className: 'budget-item-name' },
+                      h('span', null, cat.icon || '📦'),
+                      cat.name
+                    ),
+                    h('div', { className: 'budget-item-amounts' },
+                      cat.limit > 0
+                        ? `${formatCurrency(cat.spent, profile.currency)} / ${formatCurrency(cat.limit, profile.currency)}`
+                        : formatCurrency(cat.spent, profile.currency)
+                    )
+                  ),
+                  cat.limit > 0
+                    ? h('div', { className: 'budget-bar-track' },
+                        h('div', {
+                          className: `budget-bar-fill ${statusClass}`,
+                          style: { width: `${Math.min(100, cat.pct)}%` }
+                        })
+                      )
+                    : null
+                );
+              })
+            )
       );
     };
 
@@ -2679,9 +2492,16 @@
 
       return h('div', { className: 'page-view' },
         h('div', { className: 'section-header' },
-          h('div', { className: 'section-title' },
-            h('span', null, '📅'),
-            ' Recurring Transactions & Bills'
+          h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px' } },
+            h('button', {
+              type: 'button',
+              className: 'today-jump-btn',
+              onClick: () => setActiveTab('SETTINGS')
+            }, '← Back'),
+            h('div', { className: 'section-title' },
+              h('span', null, '📅'),
+              ' Recurring Bills'
+            )
           ),
           h('button', {
             type: 'button',
@@ -2690,7 +2510,7 @@
               setEditingRecurring(null);
               setIsAddRecurringOpen(true);
             }
-          }, '➕ Add Recurring')
+          }, '➕ Add')
         ),
 
         h('div', { className: 'txn-list' },
@@ -2949,27 +2769,28 @@
     // =========================================================================
     // 7. MORE / SETTINGS HUB PAGE (Requirement #7)
     // =========================================================================
-    const renderMoreView = () => {
+    const renderSettingsView = () => {
+      const userMonthlyIncome = profile.monthlyIncome !== undefined ? profile.monthlyIncome : (stats.income || 0);
+
       return h('div', { className: 'page-view' },
         h('div', { className: 'section-header' },
           h('div', { className: 'section-title' },
             h('span', null, '⚙️'),
-            ' Settings & Preferences'
+            ' Settings'
           )
         ),
 
-        // User Profile Summary Card with Currency Selector
-        h('div', { className: 'stat-widget', style: { marginBottom: '18px' } },
+        // 1. Financial Profile & Currency Preference
+        h('div', { className: 'stat-widget', style: { marginBottom: '16px' } },
           h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px' } },
             h('div', { style: { display: 'flex', alignItems: 'center', gap: '12px' } },
-              h('div', { className: 'logo-badge', style: { width: '46px', height: '46px', fontSize: '22px' } }, '👤'),
+              h('div', { className: 'logo-badge', style: { width: '42px', height: '42px', fontSize: '20px' } }, '👤'),
               h('div', null,
-                h('div', { style: { fontSize: '17px', fontWeight: 800, color: '#fff' } }, profile.name),
+                h('div', { style: { fontSize: '16px', fontWeight: 800, color: '#fff' } }, profile.name),
                 h('div', { style: { fontSize: '12px', color: 'var(--text-dim)' } }, 'Personal Finance Account')
               )
             )
           ),
-          // Currency Preference (Requirement #8)
           h('div', { className: 'form-group', style: { margin: 0 } },
             h('label', { className: 'form-label' }, 'Currency'),
             h('select', {
@@ -2986,16 +2807,89 @@
           )
         ),
 
-        // Settings Menu
+        // 2. Monthly Income & Monthly Budget Limits (Requirement #9)
+        h('div', { className: 'stat-widget', style: { marginBottom: '16px' } },
+          h('div', { className: 'section-title', style: { fontSize: '13px', marginBottom: '12px' } },
+            '🎯 Monthly Targets'
+          ),
+          h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' } },
+            h('div', { className: 'form-group', style: { margin: 0 } },
+              h('label', { className: 'form-label' }, `Monthly Budget (${profile.currency})`),
+              h('input', {
+                type: 'number',
+                className: 'form-input',
+                value: monthlyBudgetLimit,
+                onChange: (e) => {
+                  const val = parseFloat(e.target.value) || 0;
+                  setMonthlyBudgetLimit(val);
+                }
+              })
+            ),
+            h('div', { className: 'form-group', style: { margin: 0 } },
+              h('label', { className: 'form-label' }, `Monthly Income (${profile.currency})`),
+              h('input', {
+                type: 'number',
+                className: 'form-input',
+                value: userMonthlyIncome,
+                onChange: (e) => {
+                  const val = parseFloat(e.target.value) || 0;
+                  setProfile((p) => ({ ...p, monthlyIncome: val }));
+                }
+              })
+            )
+          )
+        ),
+
+        // 3. Settings Hub
         h('div', { className: 'settings-hub-grid' },
-          // Clean DATA & GIT SYNC
+          // Manage Categories
+          h('div', { className: 'settings-row', onClick: () => setIsManageCategoriesOpen(true) },
+            h('div', { className: 'settings-row-left' },
+              h('span', { className: 'settings-icon' }, '🏷️'),
+              h('div', null,
+                h('div', { className: 'settings-label' }, 'Manage Categories'),
+                h('div', { className: 'settings-sub' }, `${categories.length} categories (Tap to add or customize)`)
+              )
+            ),
+            h('span', { style: { color: 'var(--text-dim)' } }, '›')
+          ),
+
+          // Recurring Transactions & Bills
+          h('div', { className: 'settings-row', onClick: () => setActiveTab('FIXED_PAYMENTS') },
+            h('div', { className: 'settings-row-left' },
+              h('span', { className: 'settings-icon' }, '📅'),
+              h('div', null,
+                h('div', { className: 'settings-label' }, 'Recurring Transactions & Bills'),
+                h('div', { className: 'settings-sub' }, `${recurringPayments.length} rules (Rent, EMI, Subscriptions)`)
+              )
+            ),
+            h('span', { style: { color: 'var(--text-dim)' } }, '›')
+          ),
+
+          // Notification / SMS Auto-Detection
+          h('div', { className: 'settings-row', onClick: () => setIsSmsPasteOpen(true) },
+            h('div', { className: 'settings-row-left' },
+              h('span', { className: 'settings-icon' }, '📱'),
+              h('div', null,
+                h('div', { className: 'settings-label' }, 'SMS Auto-Tracking & Parser'),
+                h('div', { className: 'settings-sub' },
+                  (typeof window !== 'undefined' && window.AndroidSmsBridge)
+                    ? '🟢 Android SMS Bridge Active (Auto-tracking on)'
+                    : 'Paste & Test Indian Banking / UPI SMS'
+                )
+              )
+            ),
+            h('span', { style: { color: 'var(--neon-green)', fontWeight: 700 } }, 'Test SMS')
+          ),
+
+          // Git Cloud Sync
           h('div', { className: 'settings-row', onClick: () => setIsDataSyncOpen(true) },
             h('div', { className: 'settings-row-left' },
               h('span', { className: 'settings-icon' }, '☁️'),
               h('div', null,
-                h('div', { className: 'settings-label' }, 'Git & Cloud Data Sync'),
+                h('div', { className: 'settings-label' }, 'Git & Multi-Device Sync'),
                 h('div', { className: 'settings-sub' },
-                  liveSyncConnected ? '🟢 Git Sync Active (Radhadevan/expense-tracker)' : 'Git storage (Tap to pull/sync)'
+                  liveSyncConnected ? '🟢 Git Synced (Radhadevan/expense-tracker)' : 'Sync between Mobile & PC'
                 )
               )
             ),
@@ -3014,23 +2908,11 @@
             h('span', { style: { color: 'var(--text-dim)' } }, '›')
           ),
 
-          // Recurring Obligations
-          h('div', { className: 'settings-row', onClick: () => setActiveTab('FIXED_PAYMENTS') },
-            h('div', { className: 'settings-row-left' },
-              h('span', { className: 'settings-icon' }, '📅'),
-              h('div', null,
-                h('div', { className: 'settings-label' }, 'Recurring Transactions & Bills'),
-                h('div', { className: 'settings-sub' }, 'Manage EMI, Rent, Subscriptions, and Due dates')
-              )
-            ),
-            h('span', { style: { color: 'var(--text-dim)' } }, '›')
-          ),
-
-          // DATA & BACKUP SECTION (Requirement #7 & #21 & #22)
+          // Backup & Export Section
           h('div', { style: { marginTop: '14px', marginBottom: '6px' } },
             h('div', { className: 'section-title', style: { fontSize: '13px' } },
               h('span', null, '📂'),
-              ' Data Exports & Backup'
+              ' Backup & Restore Data'
             )
           ),
 
@@ -3064,29 +2946,30 @@
               h('span', { className: 'settings-icon' }, '📊'),
               h('div', null,
                 h('div', { className: 'settings-label' }, 'Export Monthly Statement (PDF)'),
-                h('div', { className: 'settings-sub' }, `Executive statement for ${getMonthName(viewMonth - 1)} ${viewYear}`)
+                h('div', { className: 'settings-sub' }, `Statement for ${getMonthName(viewMonth - 1)} ${viewYear}`)
               )
             ),
             h('span', { style: { color: 'var(--neon-green)', fontWeight: 800 } }, '⬇ PDF')
           ),
 
-          // Advanced JSON Backup
+          // Export JSON Backup
           h('div', { className: 'settings-row', onClick: handleExportBackup },
             h('div', { className: 'settings-row-left' },
               h('span', { className: 'settings-icon' }, '💾'),
               h('div', null,
-                h('div', { className: 'settings-label' }, 'Export Complete Backup (JSON)'),
-                h('div', { className: 'settings-sub' }, 'Save entire database for offline recovery')
+                h('div', { className: 'settings-label' }, 'Backup / Export Data (JSON)'),
+                h('div', { className: 'settings-sub' }, 'Save entire database to file')
               )
             ),
             h('span', { style: { color: 'var(--text-dim)' } }, '⬇')
           ),
 
+          // Restore JSON Backup
           h('label', { className: 'settings-row', style: { cursor: 'pointer' } },
             h('div', { className: 'settings-row-left' },
               h('span', { className: 'settings-icon' }, '📥'),
               h('div', null,
-                h('div', { className: 'settings-label' }, 'Restore from Backup (JSON)'),
+                h('div', { className: 'settings-label' }, 'Import / Restore Data (JSON)'),
                 h('div', { className: 'settings-sub' }, 'Load a previously saved backup file')
               )
             ),
@@ -3099,11 +2982,11 @@
             h('span', { style: { color: 'var(--text-dim)' } }, '›')
           ),
 
-          // SECURITY & PRIVACY (Requirement #10)
+          // Security (App Lock)
           h('div', { style: { marginTop: '14px', marginBottom: '6px' } },
             h('div', { className: 'section-title', style: { fontSize: '13px' } },
               h('span', null, '🔒'),
-              ' Security & Privacy'
+              ' Security'
             )
           ),
 
@@ -3136,67 +3019,26 @@
             }, appLock.enabled ? '● ON' : '○ OFF')
           ),
 
-          // DEVELOPER MODE (Requirement #7)
-          h('div', { style: { marginTop: '14px', marginBottom: '6px' } },
-            h('div', { className: 'section-title', style: { fontSize: '13px' } },
-              h('span', null, '🛠️'),
-              ' Developer / Demo Mode'
-            )
-          ),
-
-          h('div', {
-            className: 'settings-row',
-            onClick: () => {
-              setDeveloperMode((d) => !d);
-              showToast(`Developer Mode ${!developerMode ? 'Enabled' : 'Disabled'}`);
-            }
-          },
-            h('div', { className: 'settings-row-left' },
-              h('span', { className: 'settings-icon' }, '⚙️'),
-              h('div', null,
-                h('div', { className: 'settings-label' }, 'Developer Mode'),
-                h('div', { className: 'settings-sub' }, 'Reveal demo tools and test configurations')
-              )
-            ),
-            h('span', {
-              style: {
-                color: developerMode ? 'var(--neon-green)' : 'var(--text-dim)',
-                fontWeight: 800,
-                fontSize: '12px'
-              }
-            }, developerMode ? '● ON' : '○ OFF')
-          ),
-
-          developerMode &&
-            h('div', { className: 'settings-row', onClick: handleResetSampleData },
-              h('div', { className: 'settings-row-left' },
-                h('span', { className: 'settings-icon' }, '🔄'),
-                h('div', null,
-                  h('div', { className: 'settings-label', style: { color: 'var(--warning-amber)' } }, 'Reset to Initial Sample Data'),
-                  h('div', { className: 'settings-sub' }, 'Overwrites custom records with clean demonstration data')
-                )
-              ),
-              h('span', { style: { color: 'var(--warning-amber)' } }, '›')
-            ),
-
-          // DANGER ZONE (Requirement #7)
-          h('div', { className: 'danger-zone-card' },
+          // Danger Zone: Reset Data with strong confirmation
+          h('div', { className: 'danger-zone-card', style: { marginTop: '16px' } },
             h('div', { className: 'danger-zone-title' },
               h('span', null, '⚠️'),
-              ' DANGER ZONE'
+              ' RESET DATA'
             ),
             h('div', { className: 'danger-zone-desc' },
-              'Irreversibly delete all your local transactions and savings records. This cannot be undone.'
+              'Delete all transaction data from this device. Requires double confirmation to prevent accidental loss.'
             ),
             h('button', {
               type: 'button',
               className: 'danger-btn',
               onClick: () => setIsDangerZoneOpen(true)
-            }, '🗑️ Clear All Expense Data')
+            }, '🗑️ Delete All Transaction Data')
           )
         )
       );
     };
+
+    const renderMoreView = renderSettingsView;
 
     // =========================================================================
     // MODAL DIALOGS
@@ -3434,6 +3276,31 @@
       });
     };
 
+    // Manage Categories Modal
+    const renderManageCategoriesModal = () => {
+      if (!isManageCategoriesOpen) return null;
+
+      return h(ManageCategoriesModalDialog, {
+        categories,
+        onClose: () => setIsManageCategoriesOpen(false),
+        onAddCategory: handleAddCategory,
+        onDeleteCategory: (catId) => {
+          setCategories((prev) => prev.filter((c) => c.id !== catId));
+          showToast('Category deleted');
+        }
+      });
+    };
+
+    // Paste & Parse SMS Import Modal
+    const renderSmsImportModal = () => {
+      if (!isSmsPasteOpen) return null;
+
+      return h(SmsImportModalDialog, {
+        onClose: () => setIsSmsPasteOpen(false),
+        onImport: handleImportParsedSms
+      });
+    };
+
     // =========================================================================
     // MAIN APP RENDER
     // =========================================================================
@@ -3530,14 +3397,12 @@
         )
       ),
 
-      // Page Views
+      // Page Views (Minimal Architecture: HOME, TRANSACTIONS, BUDGET, SETTINGS)
       activeTab === 'HOME' && renderHomeView(),
       activeTab === 'TRANSACTIONS' && renderTransactionsView(),
-      activeTab === 'GOALS' && renderGoalsView(),
       activeTab === 'BUDGET' && renderBudgetView(),
+      (activeTab === 'SETTINGS' || activeTab === 'MORE') && renderSettingsView(),
       activeTab === 'FIXED_PAYMENTS' && renderFixedPaymentsView(),
-      activeTab === 'REPORTS' && renderReportsView(),
-      activeTab === 'MORE' && renderMoreView(),
 
       // Modals
       renderDayDetailsModal(),
@@ -3551,42 +3416,55 @@
       renderDangerClearModal(),
       renderAppLockSetupModal(),
       renderRecurringModal(),
+      renderManageCategoriesModal(),
+      renderSmsImportModal(),
 
       // Toast Notification
       toastMessage && h('div', { className: 'toast-msg' }, toastMessage),
 
-      // PROMINENT FLOATING + ACTION BUTTON (Requirement #1)
-      h('button', {
-        type: 'button',
-        className: 'fab-btn',
-        title: 'Add Money Activity',
-        onClick: () => {
-          setEditingTxn(null);
-          setIsAddTxnOpen(true);
-        }
-      }, '+'),
-
-      // Fixed Mobile Bottom Navigation Bar: HOME | TRANSACTIONS | GOALS | BUDGET | REPORTS | MORE (Requirement #4)
+      // Fixed Minimal Bottom Navigation Bar: HOME | TRANSACTIONS | (+) | BUDGET | SETTINGS
       h('nav', { className: 'bottom-nav' },
-        [
-          { id: 'HOME', icon: '🏠', label: 'Home' },
-          { id: 'TRANSACTIONS', icon: '📋', label: 'Trans.' },
-          { id: 'GOALS', icon: '🎯', label: 'Goals' },
-          { id: 'BUDGET', icon: '📊', label: 'Budget' },
-          { id: 'REPORTS', icon: '📈', label: 'Reports' },
-          { id: 'MORE', icon: '⚙️', label: 'More' }
-        ].map((item) => {
-          const isItemActive = activeTab === item.id || (item.id === 'MORE' && activeTab === 'FIXED_PAYMENTS');
-          return h('button', {
-            key: item.id,
-            type: 'button',
-            className: `nav-item ${isItemActive ? 'active' : ''}`,
-            onClick: () => setActiveTab(item.id)
-          },
-            h('span', { className: 'nav-icon' }, item.icon),
-            h('span', { className: 'nav-label' }, item.label)
-          );
-        })
+        h('button', {
+          type: 'button',
+          className: `nav-item ${activeTab === 'HOME' ? 'active' : ''}`,
+          onClick: () => setActiveTab('HOME')
+        },
+          h('span', { className: 'nav-icon' }, '🏠'),
+          h('span', { className: 'nav-label' }, 'Home')
+        ),
+        h('button', {
+          type: 'button',
+          className: `nav-item ${activeTab === 'TRANSACTIONS' ? 'active' : ''}`,
+          onClick: () => setActiveTab('TRANSACTIONS')
+        },
+          h('span', { className: 'nav-icon' }, '📋'),
+          h('span', { className: 'nav-label' }, 'Trans.')
+        ),
+        h('button', {
+          type: 'button',
+          className: 'nav-add-btn',
+          title: 'Add Money Activity',
+          onClick: () => {
+            setEditingTxn(null);
+            setIsAddTxnOpen(true);
+          }
+        }, '+'),
+        h('button', {
+          type: 'button',
+          className: `nav-item ${activeTab === 'BUDGET' ? 'active' : ''}`,
+          onClick: () => setActiveTab('BUDGET')
+        },
+          h('span', { className: 'nav-icon' }, '📊'),
+          h('span', { className: 'nav-label' }, 'Budget')
+        ),
+        h('button', {
+          type: 'button',
+          className: `nav-item ${activeTab === 'SETTINGS' || activeTab === 'MORE' || activeTab === 'FIXED_PAYMENTS' ? 'active' : ''}`,
+          onClick: () => setActiveTab('SETTINGS')
+        },
+          h('span', { className: 'nav-icon' }, '⚙️'),
+          h('span', { className: 'nav-label' }, 'Settings')
+        )
       )
     );
   }
@@ -3807,15 +3685,14 @@
         return;
       }
 
-      let finalDesc = description.trim();
+      let finalDesc = (description || notes || '').trim();
       let cat = categories.find((c) => c.id === categoryId) || filteredCategories[0];
 
       if (type === 'FUND_CONTRIBUTION') {
         const goal = goals.find((g) => g.id === selectedGoalId);
         finalDesc = finalDesc || (goal ? `Contribution to ${goal.name}` : 'Goal Contribution');
       } else if (!finalDesc) {
-        alert('Please enter a description / merchant.');
-        return;
+        finalDesc = cat ? cat.name : (type === 'INCOME' ? 'Income' : 'Expense');
       }
 
       onSave({
@@ -3841,12 +3718,12 @@
         h('div', { className: 'sheet-header' },
           h('div', { className: 'sheet-title' },
             h('span', null, isEdit ? '✏️' : '➕'),
-            isEdit ? ' Edit Transaction' : ' Add Money Activity'
+            isEdit ? ' Edit Transaction' : ' Add Transaction'
           ),
           h('button', { type: 'button', className: 'sheet-close-btn', onClick: onClose }, '✕')
         ),
 
-        // Source metadata display (Requirement #14)
+        // Source metadata display
         isEdit &&
           h('div', {
             style: {
@@ -3870,44 +3747,23 @@
               : h('span', { className: 'source-badge manual' }, '✏️ Manual Entry')
           ),
 
-        // Type Segmented Control (Requirements #1 & #4)
-        h('div', { className: 'type-segmented-control' },
-          [
-            { id: 'EXPENSE', label: 'Expense' },
-            { id: 'INCOME', label: 'Income' },
-            { id: 'REFUND', label: 'Refund' },
-            { id: 'TRANSFER', label: 'Transfer' },
-            { id: 'FUND_CONTRIBUTION', label: 'Savings Goal' }
-          ].map((t) =>
-            h('button', {
-              key: t.id,
-              type: 'button',
-              className: `type-tab-btn ${type === t.id ? `active ${t.id}` : ''}`,
-              onClick: () => {
-                setType(t.id);
-                if (t.id === 'INCOME') setCategoryId('cat-salary');
-                else if (t.id === 'EXPENSE' || t.id === 'REFUND') setCategoryId('cat-food');
-              }
-            }, t.label)
-          )
-        ),
-
         h('form', { onSubmit: handleFormSubmit },
-          // Amount Field with Quick Chips
+          // 1. AMOUNT (Primary Focus - Large & Centered)
           h('div', { className: 'form-group' },
-            h('label', { className: 'form-label' }, `Amount (${currency}) *`),
+            h('label', { className: 'form-label', style: { textAlign: 'center' } }, `Amount (${currency}) *`),
             h('input', {
               type: 'number',
               step: 'any',
-              min: '1',
+              min: '0.01',
               required: true,
+              autoFocus: true,
               placeholder: '0',
               className: 'form-input',
-              style: { fontSize: '24px', fontWeight: 900, color: '#fff' },
+              style: { fontSize: '28px', fontWeight: 900, color: '#fff', textAlign: 'center' },
               value: amount,
               onChange: (e) => setAmount(e.target.value)
             }),
-            h('div', { className: 'quick-chips' },
+            h('div', { className: 'quick-chips', style: { justifyContent: 'center' } },
               [50, 100, 500, 1000].map((inc) =>
                 h('button', {
                   key: inc,
@@ -3919,147 +3775,97 @@
             )
           ),
 
-          // If Savings Goal selected, pick which Goal
-          type === 'FUND_CONTRIBUTION'
-            ? h('div', { className: 'form-group' },
-                h('label', { className: 'form-label' }, 'Allocate to Savings Goal *'),
-                h('select', {
-                  className: 'form-select',
-                  value: selectedGoalId,
-                  onChange: (e) => setSelectedGoalId(e.target.value)
-                },
-                  goals.map((g) => h('option', { key: g.id, value: g.id }, `${g.icon || '🎯'} ${g.name}`))
-                )
-              )
-            : null,
+          // 2. EXPENSE / INCOME Toggle (Clean 2-way toggle)
+          h('div', { className: 'type-segmented-control', style: { marginBottom: '14px' } },
+            h('button', {
+              key: 'EXPENSE',
+              type: 'button',
+              className: `type-tab-btn ${type === 'EXPENSE' ? 'active expense' : ''}`,
+              onClick: () => {
+                setType('EXPENSE');
+                setCategoryId('cat-food');
+              }
+            }, '📉 Expense'),
+            h('button', {
+              key: 'INCOME',
+              type: 'button',
+              className: `type-tab-btn ${type === 'INCOME' ? 'active income' : ''}`,
+              onClick: () => {
+                setType('INCOME');
+                setCategoryId('cat-salary');
+              }
+            }, '📈 Income')
+          ),
 
-          // Description
+          // 3. CATEGORY
           h('div', { className: 'form-group' },
-            h('label', { className: 'form-label' }, 'Description / Merchant *'),
+            h('label', { className: 'form-label' }, 'Category *'),
+            h('select', {
+              className: 'form-select',
+              value: categoryId,
+              onChange: (e) => setCategoryId(e.target.value)
+            },
+              filteredCategories.map((c) =>
+                h('option', { key: c.id, value: c.id }, `${c.icon} ${c.name}`)
+              )
+            )
+          ),
+
+          // 4. DATE (Opens native calendar picker)
+          h('div', { className: 'form-group' },
+            h('label', { className: 'form-label', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
+              h('span', null, 'Date *'),
+              h('span', { style: { color: 'var(--neon-green)', fontSize: '11px', fontWeight: 600 } }, formatFullDate(date).formatted)
+            ),
+            h('input', {
+              type: 'date',
+              required: true,
+              className: 'form-input',
+              value: date,
+              onClick: (e) => {
+                if (e.target && typeof e.target.showPicker === 'function') {
+                  try { e.target.showPicker(); } catch {}
+                }
+              },
+              onChange: (e) => setDate(e.target.value)
+            })
+          ),
+
+          // 5. NOTE / DESCRIPTION (Optional)
+          h('div', { className: 'form-group' },
+            h('label', { className: 'form-label' }, 'Note / Description (Optional)'),
             h('input', {
               type: 'text',
-              required: type !== 'FUND_CONTRIBUTION',
-              placeholder: type === 'FUND_CONTRIBUTION' ? 'Optional memo' : 'e.g. Petrol, Groceries, Dinner, Salary',
+              placeholder: 'e.g. Swiggy, Fuel, Coffee, Salary',
               className: 'form-input',
               value: description,
               onChange: (e) => setDescription(e.target.value)
             })
           ),
 
-          // Category & Payment Row (For Expense & Income)
-          type !== 'FUND_CONTRIBUTION' && type !== 'TRANSFER'
-            ? h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' } },
-                h('div', { className: 'form-group' },
-                  h('label', { className: 'form-label' }, 'Category *'),
-                  h('select', {
-                    className: 'form-select',
-                    value: categoryId,
-                    onChange: (e) => setCategoryId(e.target.value)
-                  },
-                    filteredCategories.map((c) =>
-                      h('option', { key: c.id, value: c.id }, `${c.icon} ${c.name}`)
-                    )
-                  )
-                ),
-                h('div', { className: 'form-group' },
-                  h('label', { className: 'form-label' }, 'Payment Account'),
-                  h('select', {
-                    className: 'form-select',
-                    value: paymentMethod,
-                    onChange: (e) => setPaymentMethod(e.target.value)
-                  },
-                    paymentMethods.map((pm) => h('option', { key: pm, value: pm }, pm))
-                  )
-                )
-              )
-            : h('div', { className: 'form-group' },
-                h('label', { className: 'form-label' }, 'Payment Mode'),
-                h('select', {
-                  className: 'form-select',
-                  value: paymentMethod,
-                  onChange: (e) => setPaymentMethod(e.target.value)
-                },
-                  paymentMethods.map((pm) => h('option', { key: pm, value: pm }, pm))
-                )
-              ),
-
-          // Date & Time Row (Requirement #5: Date field opens calendar and moves transaction on save)
-          h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' } },
-            h('div', { className: 'form-group' },
-              h('label', { className: 'form-label', style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' } },
-                h('span', null, 'Date (opens calendar) *'),
-                h('span', { style: { color: 'var(--neon-green)', fontSize: '11px', fontWeight: 600 } }, formatFullDate(date).formatted)
-              ),
-              h('input', {
-                type: 'date',
-                required: true,
-                className: 'form-input',
-                value: date,
-                onClick: (e) => {
-                  if (e.target && typeof e.target.showPicker === 'function') {
-                    try { e.target.showPicker(); } catch {}
-                  }
-                },
-                onChange: (e) => setDate(e.target.value)
-              })
-            ),
-            h('div', { className: 'form-group' },
-              h('label', { className: 'form-label' }, 'Time'),
-              h('input', {
-                type: 'time',
-                className: 'form-input',
-                value: time,
-                onChange: (e) => setTime(e.target.value)
-              })
+          // Payment Account
+          h('div', { className: 'form-group' },
+            h('label', { className: 'form-label' }, 'Payment Mode'),
+            h('select', {
+              className: 'form-select',
+              value: paymentMethod,
+              onChange: (e) => setPaymentMethod(e.target.value)
+            },
+              paymentMethods.map((pm) => h('option', { key: pm, value: pm }, pm))
             )
           ),
 
-          // Recurring Options (Requirement #16)
-          txn && txn.isRecurring
-            ? h('div', {
-                style: {
-                  padding: '10px 12px',
-                  background: 'rgba(0, 245, 155, 0.05)',
-                  borderRadius: '8px',
-                  marginBottom: '14px',
-                  border: '1px solid rgba(0, 245, 155, 0.2)'
-                }
-              },
-                h('div', { style: { fontSize: '12px', fontWeight: 800, color: 'var(--neon-green)', marginBottom: '6px' } }, '🔄 Recurring Payment'),
-                h('label', { style: { display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: '#fff', cursor: 'pointer' } },
-                  h('input', {
-                    type: 'checkbox',
-                    checked: updateRecurringTemplate,
-                    onChange: (e) => setUpdateRecurringTemplate(e.target.checked)
-                  }),
-                  'Also update future recurring payment rule amount'
-                )
-              )
-            : null,
-
-          // Notes
-          h('div', { className: 'form-group' },
-            h('label', { className: 'form-label' }, 'Optional Notes'),
-            h('input', {
-              type: 'text',
-              placeholder: 'Additional details or memo...',
-              className: 'form-input',
-              value: notes,
-              onChange: (e) => setNotes(e.target.value)
-            })
-          ),
-
-          // Action Buttons with Prominent SAVE CHANGES (Requirement #6)
-          h('div', { className: 'sheet-actions' },
+          // 6. SAVE
+          h('div', { className: 'sheet-actions', style: { marginTop: '16px' } },
             h('button', { type: 'button', className: 'cancel-btn', onClick: onClose }, 'Cancel'),
             h('button', {
               type: 'submit',
               className: 'submit-btn',
-              style: { fontWeight: 900, letterSpacing: '0.02em' }
-            }, isEdit ? 'SAVE CHANGES' : 'RECORD ACTIVITY')
+              style: { fontWeight: 900, letterSpacing: '0.02em', flex: 2 }
+            }, isEdit ? 'SAVE CHANGES' : type === 'INCOME' ? 'RECORD INCOME' : 'RECORD EXPENSE')
           ),
 
-          // Delete Transaction inside Edit Form (Requirement #7)
+          // 7. DELETE (When editing)
           isEdit &&
             h('div', { style: { marginTop: '16px', paddingTop: '16px', borderTop: '1px solid var(--border-subtle)' } },
               h('button', {
@@ -4653,7 +4459,11 @@
             className: 'danger-btn',
             disabled: confirmText !== 'DELETE',
             style: { opacity: confirmText === 'DELETE' ? 1 : 0.4, cursor: confirmText === 'DELETE' ? 'pointer' : 'not-allowed' },
-            onClick: onConfirm
+            onClick: () => {
+              if (window.confirm('Delete all transaction data?\n\nThis will remove all recorded transactions from this device and cannot be undone. Are you sure?')) {
+                onConfirm();
+              }
+            }
           }, 'Erase Everything')
         )
       )
@@ -4886,6 +4696,215 @@
             h('button', { type: 'button', className: 'cancel-btn', onClick: onClose }, 'Cancel'),
             h('button', { type: 'submit', className: 'submit-btn' }, isEditing ? '💾 Save Changes' : '➕ Save Obligation')
           )
+        )
+      )
+    );
+  }
+
+  // Manage Categories Modal Dialog (Requirement #9)
+  function ManageCategoriesModalDialog({ categories, onClose, onAddCategory, onDeleteCategory }) {
+    const [name, setName] = useState('');
+    const [type, setType] = useState('EXPENSE');
+    const [icon, setIcon] = useState('📦');
+
+    const popularIcons = ['🍔', '☕', '🚗', '🏠', '🛒', '💊', '🎬', '✈️', '💻', '💡', '💼', '🎁', '📱', '📦'];
+
+    const handleCreate = (e) => {
+      e.preventDefault();
+      if (!name.trim()) return;
+      const newCat = {
+        id: 'cat-custom-' + Date.now(),
+        name: name.trim(),
+        type,
+        icon: icon || '📦',
+        color: '#00f59b'
+      };
+      onAddCategory(newCat);
+      setName('');
+    };
+
+    return h('div', { className: 'modal-backdrop' },
+      h('div', { className: 'bottom-sheet-card', style: { maxWidth: '440px', maxHeight: '85vh', overflowY: 'auto' } },
+        h('div', { className: 'sheet-header' },
+          h('div', { className: 'sheet-title' },
+            h('span', null, '🏷️'),
+            ' Manage Categories'
+          ),
+          h('button', { type: 'button', className: 'sheet-close-btn', onClick: onClose }, '✕')
+        ),
+
+        // Add Category Form
+        h('form', { onSubmit: handleCreate, style: { marginBottom: '18px', padding: '14px', background: 'rgba(255, 255, 255, 0.03)', borderRadius: '10px', border: '1px solid var(--border-subtle)' } },
+          h('div', { style: { fontSize: '13px', fontWeight: 800, color: 'var(--neon-green)', marginBottom: '10px' } }, '➕ Add New Category'),
+          h('div', { className: 'type-segmented-control', style: { marginBottom: '10px' } },
+            h('button', {
+              type: 'button',
+              className: `type-tab-btn ${type === 'EXPENSE' ? 'active expense' : ''}`,
+              onClick: () => setType('EXPENSE')
+            }, 'Expense'),
+            h('button', {
+              type: 'button',
+              className: `type-tab-btn ${type === 'INCOME' ? 'active income' : ''}`,
+              onClick: () => setType('INCOME')
+            }, 'Income')
+          ),
+          h('div', { className: 'form-group', style: { marginBottom: '10px' } },
+            h('label', { className: 'form-label' }, 'Category Name'),
+            h('input', {
+              type: 'text',
+              className: 'form-input',
+              required: true,
+              placeholder: 'e.g. Pet Care, Tuition, Freelance',
+              value: name,
+              onChange: (e) => setName(e.target.value)
+            })
+          ),
+          h('div', { className: 'form-group', style: { marginBottom: '12px' } },
+            h('label', { className: 'form-label' }, 'Select Icon'),
+            h('div', { style: { display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '6px' } },
+              popularIcons.map((ic) =>
+                h('button', {
+                  key: ic,
+                  type: 'button',
+                  style: {
+                    fontSize: '18px',
+                    padding: '6px 10px',
+                    borderRadius: '8px',
+                    border: icon === ic ? '2px solid var(--neon-green)' : '1px solid var(--border-subtle)',
+                    background: icon === ic ? 'rgba(0, 245, 155, 0.15)' : 'rgba(255, 255, 255, 0.05)',
+                    cursor: 'pointer'
+                  },
+                  onClick: () => setIcon(ic)
+                }, ic)
+              )
+            )
+          ),
+          h('button', {
+            type: 'submit',
+            className: 'submit-btn',
+            style: { width: '100%', padding: '10px' }
+          }, 'Add Category')
+        ),
+
+        // List Categories
+        h('div', { style: { fontSize: '13px', fontWeight: 800, color: 'var(--text-dim)', marginBottom: '10px' } }, `All Categories (${categories.length})`),
+        h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px' } },
+          categories.map((c) =>
+            h('div', {
+              key: c.id,
+              style: {
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                padding: '10px 14px',
+                background: 'rgba(255, 255, 255, 0.02)',
+                border: '1px solid var(--border-subtle)',
+                borderRadius: '8px'
+              }
+            },
+              h('div', { style: { display: 'flex', alignItems: 'center', gap: '10px' } },
+                h('span', { style: { fontSize: '18px' } }, c.icon || '📦'),
+                h('div', null,
+                  h('div', { style: { fontSize: '14px', fontWeight: 700, color: '#fff' } }, c.name),
+                  h('div', { style: { fontSize: '11px', color: c.type === 'INCOME' ? 'var(--neon-green)' : 'var(--expense-pink)' } }, c.type)
+                )
+              ),
+              c.id.startsWith('cat-custom-') && onDeleteCategory
+                ? h('button', {
+                    type: 'button',
+                    style: { background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '14px' },
+                    title: 'Delete Category',
+                    onClick: () => onDeleteCategory(c.id)
+                  }, '🗑️')
+                : null
+            )
+          )
+        )
+      )
+    );
+  }
+
+  // Paste & Test SMS Import Modal Dialog (Requirement #9 & #13)
+  function SmsImportModalDialog({ onClose, onImport }) {
+    const [smsText, setSmsText] = useState('');
+    const [parsedResult, setParsedResult] = useState(null);
+    const [errorMsg, setErrorMsg] = useState('');
+
+    const handleParse = () => {
+      setErrorMsg('');
+      if (!smsText.trim()) {
+        setErrorMsg('Please paste an SMS message.');
+        return;
+      }
+      if (typeof window.SmsTransactionParser === 'undefined') {
+        setErrorMsg('SMS Parser module is loading or unavailable.');
+        return;
+      }
+      try {
+        const res = window.SmsTransactionParser.parseSms(smsText);
+        if (!res || !res.isFinancial || res.isIgnored) {
+          setErrorMsg(res?.reason || 'No financial transaction detected in this message.');
+          setParsedResult(null);
+        } else {
+          setParsedResult(res);
+        }
+      } catch (err) {
+        setErrorMsg('Failed to parse SMS: ' + err.message);
+      }
+    };
+
+    return h('div', { className: 'modal-backdrop' },
+      h('div', { className: 'bottom-sheet-card', style: { maxWidth: '440px' } },
+        h('div', { className: 'sheet-header' },
+          h('div', { className: 'sheet-title' },
+            h('span', null, '📱'),
+            ' Paste & Test Bank SMS'
+          ),
+          h('button', { type: 'button', className: 'sheet-close-btn', onClick: onClose }, '✕')
+        ),
+
+        h('p', { style: { fontSize: '12.5px', color: 'var(--text-muted)', marginBottom: '12px', lineHeight: 1.5 } },
+          'Paste any Indian Bank or UPI SMS (HDFC, SBI, ICICI, Axis, PayTM, GPay, PhonePe). The app will automatically extract amount, merchant, date, and category.'
+        ),
+
+        h('div', { className: 'form-group' },
+          h('textarea', {
+            className: 'form-input',
+            rows: 4,
+            placeholder: 'e.g. Sent Rs.450.00 from HDFC Bank to SWIGGY on 07-10-26. UPI Ref 3291829102.',
+            style: { fontFamily: 'monospace', fontSize: '12.5px', resize: 'vertical' },
+            value: smsText,
+            onChange: (e) => setSmsText(e.target.value)
+          })
+        ),
+
+        h('button', {
+          type: 'button',
+          className: 'submit-btn',
+          style: { width: '100%', marginBottom: '14px' },
+          onClick: handleParse
+        }, '🔍 Parse SMS'),
+
+        errorMsg && h('div', { style: { padding: '10px', background: 'rgba(239, 68, 68, 0.1)', border: '1px solid #ef4444', borderRadius: '8px', color: '#ef4444', fontSize: '12.5px', marginBottom: '12px' } },
+          `⚠️ ${errorMsg}`
+        ),
+
+        parsedResult && h('div', { style: { padding: '14px', background: 'rgba(0, 245, 155, 0.05)', border: '1px solid var(--neon-green)', borderRadius: '10px', marginBottom: '14px' } },
+          h('div', { style: { fontSize: '13px', fontWeight: 800, color: 'var(--neon-green)', marginBottom: '8px' } }, '✅ Detected Transaction'),
+          h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', fontSize: '12px' } },
+            h('div', null, h('strong', null, 'Type: '), parsedResult.type),
+            h('div', null, h('strong', null, 'Amount: '), `₹${parsedResult.amount}`),
+            h('div', null, h('strong', null, 'Merchant: '), parsedResult.merchant),
+            h('div', null, h('strong', null, 'Category: '), parsedResult.categoryName),
+            h('div', null, h('strong', null, 'Date: '), parsedResult.transactionDate),
+            h('div', null, h('strong', null, 'Payment: '), parsedResult.paymentMethod || 'UPI')
+          ),
+          h('button', {
+            type: 'button',
+            className: 'submit-btn',
+            style: { width: '100%', marginTop: '12px' },
+            onClick: () => onImport(parsedResult)
+          }, '➕ Record This Transaction')
         )
       )
     );
