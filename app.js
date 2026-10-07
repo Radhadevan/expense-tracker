@@ -1914,111 +1914,309 @@
     const [pinAttempt, setPinAttempt] = useState('');
 
     // =========================================================================
-    // 1. HOME VIEW (Requirement #1)
+    // 1. HOME VIEW (Reference Redesign: Premium Finance Dashboard)
     // =========================================================================
+
+    // Smart category icon mapping helper matching reference image
+    const getSmartCategoryIcon = (txn, categoriesList) => {
+      const desc = (txn.description || '').toLowerCase();
+      const cat = (categoriesList || []).find((c) => c.id === txn.categoryId) || {};
+      const catName = (cat.name || txn.categoryName || '').toLowerCase();
+
+      if (desc.includes('fruit') || desc.includes('apple') || desc.includes('banana') || desc.includes('mango') || desc.includes('vegetable') || desc.includes('grocery')) {
+        return '🍏';
+      }
+      if (desc.includes('canteen') || desc.includes('mess') || desc.includes('snack') || desc.includes('lunch') || desc.includes('dinner') || desc.includes('breakfast') || desc.includes('tea') || desc.includes('coffee') || desc.includes('cafe')) {
+        return '🍴';
+      }
+      if (desc.includes('hotel') || desc.includes('restaurant') || desc.includes('dine') || desc.includes('swiggy') || desc.includes('zomato')) {
+        return '🏨';
+      }
+      if (desc.includes('rent') || desc.includes('room') || desc.includes('flat') || desc.includes('house') || desc.includes('maintenance')) {
+        return '🏠';
+      }
+      if (desc.includes('bus') || desc.includes('train') || desc.includes('metro') || desc.includes('uber') || desc.includes('ola') || desc.includes('auto') || desc.includes('petrol') || desc.includes('fuel') || desc.includes('cab')) {
+        return '🚌';
+      }
+      if (desc.includes('credit card') || desc.includes('bill') || desc.includes('recharge') || desc.includes('electricity') || desc.includes('wifi') || desc.includes('broadband')) {
+        return '💳';
+      }
+      if (desc.includes('salary') || desc.includes('stipend') || desc.includes('bonus') || desc.includes('profit')) {
+        return '💼';
+      }
+
+      if (catName.includes('food') || catName.includes('eat') || catName.includes('dining')) return '🍴';
+      if (catName.includes('rent') || catName.includes('housing') || catName.includes('home')) return '🏠';
+      if (catName.includes('travel') || catName.includes('transport') || catName.includes('commute')) return '🚌';
+      if (catName.includes('bill') || catName.includes('utility') || catName.includes('card') || catName.includes('emi')) return '💳';
+      if (catName.includes('shop') || catName.includes('cloth') || catName.includes('store')) return '🛍️';
+      if (catName.includes('salary') || catName.includes('income')) return '💼';
+      if (catName.includes('health') || catName.includes('med') || catName.includes('doctor')) return '💊';
+      if (catName.includes('entertain') || catName.includes('movie')) return '🎬';
+
+      return cat.icon || txn.categoryIcon || '📦';
+    };
+
+    // Donut chart data preparer: top categories + grouped other
+    const prepareDonutData = (breakdownList, totalExpenses) => {
+      if (!breakdownList || breakdownList.length === 0 || totalExpenses <= 0) {
+        return [];
+      }
+      const DONUT_COLORS = ['#c8f53c', '#ff4d79', '#a855f7', '#94a3b8', '#06b6d4', '#f59e0b', '#ec4899'];
+      if (breakdownList.length <= 4) {
+        return breakdownList.map((item, idx) => ({
+          ...item,
+          color: DONUT_COLORS[idx % DONUT_COLORS.length],
+          pct: item.percentage || (totalExpenses > 0 ? safeRound((item.amount / totalExpenses) * 100) : 0)
+        }));
+      }
+
+      const top3 = breakdownList.slice(0, 3).map((item, idx) => ({
+        ...item,
+        color: DONUT_COLORS[idx],
+        pct: item.percentage || (totalExpenses > 0 ? safeRound((item.amount / totalExpenses) * 100) : 0)
+      }));
+
+      const rest = breakdownList.slice(3);
+      const otherAmt = rest.reduce((sum, i) => sum + i.amount, 0);
+      const otherPct = totalExpenses > 0 ? safeRound((otherAmt / totalExpenses) * 100) : 0;
+
+      top3.push({
+        id: 'cat-grouped-other',
+        name: 'Other',
+        icon: '📦',
+        color: '#94a3b8',
+        amount: otherAmt,
+        percentage: otherPct,
+        pct: otherPct
+      });
+      return top3;
+    };
+
+    // Render Spending Donut SVG
+    const renderSpendingDonut = (donutData, totalExpenses) => {
+      const radius = 50;
+      const circumference = 2 * Math.PI * radius; // ~314.159
+      let accumulatedOffset = 0;
+
+      if (!donutData || donutData.length === 0 || totalExpenses <= 0) {
+        return h('div', { className: 'home-donut-wrap' },
+          h('svg', {
+            viewBox: '0 0 140 140',
+            width: '140',
+            height: '140',
+            style: { display: 'block' }
+          },
+            h('circle', {
+              cx: '70',
+              cy: '70',
+              r: radius,
+              fill: 'none',
+              stroke: 'rgba(255, 255, 255, 0.08)',
+              strokeWidth: '16'
+            })
+          ),
+          h('div', { className: 'home-donut-center' },
+            h('span', { className: 'home-donut-label' }, 'EXPENSES'),
+            h('span', { className: 'home-donut-amount' }, formatCurrency(0, profile.currency))
+          )
+        );
+      }
+
+      return h('div', { className: 'home-donut-wrap' },
+        h('svg', {
+          viewBox: '0 0 140 140',
+          width: '140',
+          height: '140',
+          style: {
+            display: 'block',
+            transform: 'rotate(-90deg)',
+            transformOrigin: '50% 50%'
+          }
+        },
+          donutData.map((slice, idx) => {
+            const sliceFraction = totalExpenses > 0 ? (slice.amount / totalExpenses) : 0;
+            const strokeLength = sliceFraction * circumference;
+            const currentOffset = accumulatedOffset;
+            accumulatedOffset += strokeLength;
+
+            const gap = donutData.length > 1 ? 2.5 : 0;
+            const finalLength = Math.max(0, strokeLength - gap);
+
+            return h('circle', {
+              key: slice.id || idx,
+              cx: '70',
+              cy: '70',
+              r: radius,
+              fill: 'none',
+              stroke: slice.color,
+              strokeWidth: '16',
+              strokeDasharray: `${finalLength} ${circumference - finalLength}`,
+              strokeDashoffset: -currentOffset,
+              style: { transition: 'stroke-dasharray 0.4s ease, stroke-dashoffset 0.4s ease' }
+            });
+          })
+        ),
+        h('div', { className: 'home-donut-center' },
+          h('span', { className: 'home-donut-label' }, 'EXPENSES'),
+          h('span', { className: 'home-donut-amount' }, formatCurrency(totalExpenses, profile.currency))
+        )
+      );
+    };
+
     const renderHomeView = () => {
       const recentTxns = transactions.slice(0, 8);
-      const totalAccountBalance = accounts.reduce((acc, a) => acc + (Number(a.balance) || 0), 0);
-      const displayBalance = totalAccountBalance > 0 ? totalAccountBalance : stats.availableBalance;
-      const remaining = safeRound(stats.income - stats.expenses);
+      // Main Balance Logic: Dynamic Current Balance = Total Income - Total Expenses for this month
+      const currentBalance = safeRound(stats.income - stats.expenses);
+      const donutData = prepareDonutData(categoryBreakdown.list, stats.expenses);
 
       return h('div', { className: 'page-view' },
-        // 1. Balance Hero Card (How much money do I have?)
-        h('div', { className: 'balance-card' },
-          h('div', { className: 'balance-header' },
-            h('span', { className: 'balance-label' }, 'TOTAL BALANCE'),
-            h('span', { className: 'savings-badge' }, `${getMonthName(viewMonth - 1).slice(0, 3)} ${viewYear}`)
+        // 1. Current Balance Hero Card (Dynamic & clean)
+        h('div', { className: 'home-balance-card' },
+          h('div', { className: 'home-balance-top' },
+            h('span', { className: 'home-balance-title' }, 'CURRENT BALANCE'),
+            h('span', { className: 'home-month-badge' }, '📈 This Month')
           ),
-          h('div', { className: 'balance-amount' }, formatCurrency(displayBalance, profile.currency)),
-          h('div', { className: 'balance-sub' },
-            'Available Funds · ',
-            h('span', null, `${transactions.length} transactions recorded`)
+          h('div', { className: 'home-balance-amount' }, formatCurrency(currentBalance, profile.currency)),
+          h('div', { className: 'home-balance-sub' }, 'Total income - expenses for this month'),
+          h('div', { className: 'home-balance-split' },
+            h('div', { className: 'home-split-col' },
+              h('div', { className: 'home-split-label income' },
+                h('span', null, '↑'),
+                'INCOME'
+              ),
+              h('div', { className: 'home-split-val income' }, `+${formatCurrency(stats.income, profile.currency)}`)
+            ),
+            h('div', { className: 'home-split-col' },
+              h('div', { className: 'home-split-label expense' },
+                h('span', null, '↓'),
+                'EXPENSES'
+              ),
+              h('div', { className: 'home-split-val expense' }, `−${formatCurrency(stats.expenses, profile.currency)}`)
+            )
           )
         ),
 
-        // 2. Clean 3-Card Monthly Summary: INCOME | EXPENSES | REMAINING
-        h('div', { className: 'tri-card-grid' },
-          h('div', { className: 'mini-kpi-card' },
-            h('div', { className: 'mini-kpi-label' }, 'INCOME'),
-            h('div', { className: 'mini-kpi-value income' }, `+${formatCurrency(stats.income, profile.currency)}`)
-          ),
-          h('div', { className: 'mini-kpi-card' },
-            h('div', { className: 'mini-kpi-label' }, 'EXPENSES'),
-            h('div', { className: 'mini-kpi-value expense' }, `-${formatCurrency(stats.expenses, profile.currency)}`)
-          ),
-          h('div', { className: 'mini-kpi-card' },
-            h('div', { className: 'mini-kpi-label' }, 'REMAINING'),
-            h('div', { className: `mini-kpi-value ${remaining >= 0 ? 'savings' : 'expense'}` }, formatCurrency(remaining, profile.currency))
-          )
+        // 2. Spending Analytics Diagram Card
+        h('div', { className: 'home-analytics-card' },
+          donutData.length === 0
+            ? h('div', { style: { textAlign: 'center', padding: '24px 10px', color: '#64748b' } },
+                h('div', { style: { fontSize: '24px', marginBottom: '6px' } }, '📊'),
+                h('div', { style: { fontSize: '13px', fontWeight: 600 } }, 'No expenses recorded for this month')
+              )
+            : h('div', { className: 'home-analytics-grid' },
+                // Donut Chart with center amount
+                renderSpendingDonut(donutData, stats.expenses),
+
+                // Category Legend
+                h('div', { className: 'home-legend-col' },
+                  donutData.map((cat) =>
+                    h('div', { key: cat.id, className: 'home-legend-row' },
+                      h('div', { className: 'home-legend-name-wrap' },
+                        h('span', { className: 'home-legend-dot', style: { backgroundColor: cat.color } }),
+                        h('span', null, cat.name)
+                      ),
+                      h('span', { className: 'home-legend-pct' }, `${cat.pct}%`),
+                      h('span', { className: 'home-legend-amt' }, formatCurrency(cat.amount, profile.currency))
+                    )
+                  )
+                ),
+
+                // Spending Overview
+                h('div', { className: 'home-overview-col' },
+                  h('div', { className: 'home-overview-title' }, 'SPENDING OVERVIEW'),
+                  donutData.map((cat) =>
+                    h('div', { key: cat.id, className: 'home-overview-row' },
+                      h('span', { className: 'home-overview-name' }, cat.name),
+                      h('div', { className: 'home-overview-bar-track' },
+                        h('div', {
+                          className: 'home-overview-bar-fill',
+                          style: {
+                            width: `${Math.min(100, Math.max(4, cat.pct))}%`,
+                            backgroundColor: cat.color
+                          }
+                        })
+                      ),
+                      h('span', { className: 'home-overview-pct' }, `${cat.pct}%`)
+                    )
+                  )
+                )
+              )
         ),
 
-        // 3. Prominent Add Button Callout
+        // 3. Full-Width Prominent Add Button Callout
         h('button', {
           type: 'button',
-          className: 'prominent-add-btn',
+          className: 'home-add-btn',
           onClick: () => {
             setEditingTxn(null);
             setIsAddTxnOpen(true);
           }
         },
-          h('span', null, '➕'),
-          'Add Expense / Income'
+          h('span', { style: { fontSize: '18px', fontWeight: 900 } }, '+'),
+          'Add Transaction'
         ),
 
-        // 4. Recent Transactions List (What did I spend recently?)
-        h('div', { className: 'section-header' },
-          h('div', { className: 'section-title' },
-            h('span', null, '⚡'),
-            ' Recent Transactions'
+        // 4. Recent Transactions Section
+        h('div', { className: 'home-recent-section' },
+          h('div', { className: 'home-recent-header' },
+            h('div', { className: 'home-recent-title' },
+              h('span', { className: 'neon-bolt' }, '⚡'),
+              'RECENT TRANSACTIONS'
+            ),
+            h('button', {
+              type: 'button',
+              className: 'view-all-link-btn',
+              onClick: () => setActiveTab('TRANSACTIONS')
+            }, 'View All →')
           ),
-          h('button', {
-            type: 'button',
-            className: 'today-jump-btn',
-            onClick: () => setActiveTab('TRANSACTIONS')
-          }, 'View All →')
-        ),
 
-        recentTxns.length === 0
-          ? h('div', { className: 'empty-state-box' },
-              h('div', { className: 'empty-icon' }, '📋'),
-              h('div', { className: 'empty-title' }, 'No transactions recorded yet'),
-              h('p', { className: 'empty-desc' }, 'Tap the + button to record your first expense or income.')
-            )
-          : h('div', { className: 'txn-list' },
-              recentTxns.map((t) => {
-                const isInc = t.type === 'INCOME';
-                const cat = categories.find((c) => c.id === t.categoryId) || { icon: t.categoryIcon || '📦', name: t.categoryName || 'Other' };
-                return h('div', {
-                  key: t.id,
-                  className: 'txn-card',
-                  style: { cursor: 'pointer' },
-                  title: 'Tap to edit transaction',
-                  onClick: () => {
-                    setEditingTxn(t);
-                    setIsAddTxnOpen(true);
-                  }
-                },
-                  h('div', { className: 'txn-left' },
-                    h('div', { className: 'txn-cat-icon' }, cat.icon || '📦'),
-                    h('div', { className: 'txn-details' },
-                      h('div', { className: 'txn-desc' }, t.description || cat.name),
-                      h('div', { className: 'txn-meta' },
-                        h('span', null, formatFullDate(t.date).shortFormatted),
-                        t.time ? h('span', null, `· ${formatTimeAMPM(t.time)}`) : null,
-                        h('span', { className: 'txn-pill' }, t.paymentMethod || 'UPI'),
-                        t.source === 'SMS' ? h('span', { className: 'txn-pill', style: { color: 'var(--neon-green)' } }, '📱 SMS') : null
+          recentTxns.length === 0
+            ? h('div', { className: 'empty-state-box' },
+                h('div', { className: 'empty-icon' }, '📋'),
+                h('div', { className: 'empty-title' }, 'No transactions recorded yet'),
+                h('p', { className: 'empty-desc' }, 'Tap the + button to record your first expense or income.')
+              )
+            : h('div', { className: 'home-txn-list' },
+                recentTxns.map((t) => {
+                  const isInc = t.type === 'INCOME';
+                  const cat = categories.find((c) => c.id === t.categoryId) || { icon: t.categoryIcon || '📦', name: t.categoryName || 'Other' };
+                  const smartIcon = getSmartCategoryIcon(t, categories);
+                  const dateInfo = formatFullDate(t.date);
+                  const timeFormatted = t.time ? formatTimeAMPM(t.time) : '';
+                  const metaParts = [
+                    cat.name,
+                    t.paymentMethod || 'UPI',
+                    dateInfo.shortFormatted || t.date,
+                    timeFormatted
+                  ].filter(Boolean);
+
+                  return h('div', {
+                    key: t.id,
+                    className: 'home-txn-card',
+                    title: 'Tap to edit transaction',
+                    onClick: () => {
+                      setEditingTxn(t);
+                      setIsAddTxnOpen(true);
+                    }
+                  },
+                    h('div', { className: 'home-txn-left' },
+                      h('div', { className: 'home-txn-icon-badge' }, smartIcon),
+                      h('div', { className: 'home-txn-info' },
+                        h('div', { className: 'home-txn-title' }, (t.description || cat.name).toUpperCase()),
+                        h('div', { className: 'home-txn-meta' }, metaParts.join(' · '))
                       )
-                    )
-                  ),
-                  h('div', { className: 'txn-right' },
-                    h('div', { className: `txn-amount ${isInc ? 'income' : 'expense'}` },
-                      `${isInc ? '+' : '-'}${formatCurrency(t.amount, profile.currency)}`
                     ),
-                    h('span', { style: { fontSize: '11px', color: 'var(--text-dim)', marginTop: '2px' } }, cat.name)
-                  )
-                );
-              })
-            )
+                    h('div', { className: 'home-txn-right' },
+                      h('div', { className: `home-txn-amount ${isInc ? 'income' : 'expense'}` },
+                        `${isInc ? '+' : '−'}${formatCurrency(t.amount, profile.currency)}`
+                      ),
+                      h('span', { className: 'home-txn-cat-name' }, cat.name)
+                    )
+                  );
+                })
+              )
+        )
       );
     };
 
@@ -3334,66 +3532,64 @@
     }
 
     return h('div', { className: 'app-container' },
-      // Top Header (Adaptive 2-row on mobile)
+      // Top Header (Clean & Compact matching reference design)
       h('header', { className: 'app-header' },
         h('div', { className: 'header-left' },
-          h('div', { className: 'logo-badge' }, '💎'),
           h('div', { className: 'brand-info' },
-            h('h1', null, 'Expense ', h('span', null, 'Tracker')),
-            h('div', { className: 'brand-tagline' }, 'PLAN · TRACK · SAVE · GROW'),
-            h('div', { className: 'header-greeting' }, getGreeting(profile.name))
+            h('h1', { className: 'home-header-title' }, 'Expense ', h('span', { className: 'neon-word' }, 'Tracker')),
+            h('div', { className: 'home-header-greeting' }, getGreeting(profile.name))
           )
         ),
 
-        // Month Selector
-        h('div', { className: 'month-selector' },
+        // Header Right: Month Selector + Small Today button (+ Git sync ONLY if not on Home)
+        h('div', { className: 'header-right' },
+          h('div', { className: 'month-selector' },
+            h('button', {
+              type: 'button',
+              className: 'month-nav-btn',
+              onClick: handlePrevMonth,
+              title: 'Previous Month'
+            }, '‹'),
+            h('div', { className: 'current-month-label' }, `${getMonthName(viewMonth - 1)} ${viewYear}`),
+            h('button', {
+              type: 'button',
+              className: 'month-nav-btn',
+              onClick: handleNextMonth,
+              title: 'Next Month'
+            }, '›')
+          ),
           h('button', {
             type: 'button',
-            className: 'month-nav-btn',
-            onClick: handlePrevMonth,
-            title: 'Previous Month'
-          }, '‹'),
-          h('div', { className: 'current-month-label' }, `${getMonthName(viewMonth - 1)} ${viewYear}`),
-          h('button', {
-            type: 'button',
-            className: 'month-nav-btn',
-            onClick: handleNextMonth,
-            title: 'Next Month'
-          }, '›'),
-          h('button', {
-            type: 'button',
-            className: 'today-jump-btn',
+            className: 'today-icon-btn',
             onClick: handleJumpToday,
             title: 'Jump to Current Month'
-          }, 'Today')
-        ),
-
-        // Header Right: LIVE GIT SYNC & OFFLINE INDICATOR
-        h('div', { className: 'header-right' },
-          liveSyncConnected
-            ? h('button', {
-                type: 'button',
-                className: 'sync-status-badge live-sync-btn',
-                title: 'Git-Synchronized. Tap to pull latest from Git.',
-                onClick: () => pullFromGit(true)
-              },
-                h('span', { className: 'sync-dot' }),
-                'Git Synced'
-              )
-            : !isOnline
-            ? h('div', { className: 'sync-status-badge', style: { color: 'var(--warning-amber)' } },
-                h('span', { className: 'sync-dot offline' }),
-                'Offline'
-              )
-            : h('button', {
-                type: 'button',
-                className: 'sync-status-badge live-sync-btn offline-state',
-                title: 'Tap to fetch data from Git repository',
-                onClick: () => pullFromGit(true)
-              },
-                h('span', { className: 'sync-dot offline' }),
-                'Sync Git'
-              )
+          }, '📅'),
+          activeTab !== 'HOME' && (
+            liveSyncConnected
+              ? h('button', {
+                  type: 'button',
+                  className: 'sync-status-badge live-sync-btn',
+                  title: 'Git-Synchronized. Tap to pull latest from Git.',
+                  onClick: () => pullFromGit(true)
+                },
+                  h('span', { className: 'sync-dot' }),
+                  'Git Synced'
+                )
+              : !isOnline
+              ? h('div', { className: 'sync-status-badge', style: { color: 'var(--warning-amber)' } },
+                  h('span', { className: 'sync-dot offline' }),
+                  'Offline'
+                )
+              : h('button', {
+                  type: 'button',
+                  className: 'sync-status-badge live-sync-btn offline-state',
+                  title: 'Tap to fetch data from Git repository',
+                  onClick: () => pullFromGit(true)
+                },
+                  h('span', { className: 'sync-dot offline' }),
+                  'Sync Git'
+                )
+          )
         )
       ),
 
@@ -3422,7 +3618,7 @@
       // Toast Notification
       toastMessage && h('div', { className: 'toast-msg' }, toastMessage),
 
-      // Fixed Minimal Bottom Navigation Bar: HOME | TRANSACTIONS | (+) | BUDGET | SETTINGS
+      // Fixed Minimal Bottom Navigation Bar: HOME | TRANSACTIONS | (+) | BUDGET | MORE
       h('nav', { className: 'bottom-nav' },
         h('button', {
           type: 'button',
@@ -3437,13 +3633,13 @@
           className: `nav-item ${activeTab === 'TRANSACTIONS' ? 'active' : ''}`,
           onClick: () => setActiveTab('TRANSACTIONS')
         },
-          h('span', { className: 'nav-icon' }, '📋'),
-          h('span', { className: 'nav-label' }, 'Trans.')
+          h('span', { className: 'nav-icon' }, '📄'),
+          h('span', { className: 'nav-label' }, 'Transactions')
         ),
         h('button', {
           type: 'button',
           className: 'nav-add-btn',
-          title: 'Add Money Activity',
+          title: 'Add Transaction',
           onClick: () => {
             setEditingTxn(null);
             setIsAddTxnOpen(true);
@@ -3460,10 +3656,10 @@
         h('button', {
           type: 'button',
           className: `nav-item ${activeTab === 'SETTINGS' || activeTab === 'MORE' || activeTab === 'FIXED_PAYMENTS' ? 'active' : ''}`,
-          onClick: () => setActiveTab('SETTINGS')
+          onClick: () => setActiveTab('MORE')
         },
-          h('span', { className: 'nav-icon' }, '⚙️'),
-          h('span', { className: 'nav-label' }, 'Settings')
+          h('span', { className: 'nav-icon' }, '⋯'),
+          h('span', { className: 'nav-label' }, 'More')
         )
       )
     );
