@@ -1029,18 +1029,9 @@
       const remoteTxns = Array.isArray(data.transactions) ? data.transactions : [];
       if (remoteTxns.length === 0 && !data.profile && !data.goals) return;
 
-      // Smart merge transactions: remote transactions are source of truth, but keep any offline local additions
-      const localTxns = transactionsRef.current || [];
-      const txnMap = new Map();
-      remoteTxns.forEach((t) => txnMap.set(t.id, t));
-      let hasNewLocal = false;
-      localTxns.forEach((t) => {
-        if (!txnMap.has(t.id)) {
-          txnMap.set(t.id, t);
-          hasNewLocal = true;
-        }
-      });
-      const finalTxns = Array.from(txnMap.values());
+      // Canonical Git Sync: Git transactions are the single source of truth!
+      // This eliminates discrepancies and guarantees laptop and mobile have identical data.
+      const finalTxns = remoteTxns;
 
       isApplyingIncomingSyncRef.current = true;
       setTransactions(finalTxns);
@@ -3323,6 +3314,9 @@
           pullFromGit(true);
           pushCurrentStateToServer();
         },
+        onImportData: (imported) => {
+          applyIncomingData(imported, true);
+        },
         onClose: () => setIsDataSyncOpen(false),
         onSave: (newConfig) => {
           setSupabaseConfig(newConfig);
@@ -4446,6 +4440,44 @@
           }
         }, isPushing ? '🚀 Committing to Git...' : '🚀 Commit & Push to Git Repository'),
 
+        // 1-Click Clipboard & File Backup Row
+        h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '12px' } },
+          h('button', {
+            type: 'button',
+            className: 'secondary-btn',
+            style: { fontSize: '12px', padding: '10px 6px' },
+            onClick: () => {
+              try {
+                navigator.clipboard.writeText(JSON.stringify(currentState, null, 2));
+                alert('📋 Copied all expense data to clipboard! Paste it on your other device.');
+              } catch (_) {
+                prompt('Copy this data:', JSON.stringify(currentState));
+              }
+            }
+          }, '📋 Copy Data'),
+          h('button', {
+            type: 'button',
+            className: 'secondary-btn',
+            style: { fontSize: '12px', padding: '10px 6px' },
+            onClick: () => {
+              const text = prompt('Paste the expense JSON data here to import:');
+              if (!text || !text.trim()) return;
+              try {
+                const parsed = JSON.parse(text);
+                if (parsed && (parsed.transactions || parsed.profile)) {
+                  if (onImportData) onImportData(parsed);
+                  alert('✅ Successfully imported! Your data now matches the other device.');
+                  onClose();
+                } else {
+                  alert('Invalid JSON structure.');
+                }
+              } catch (err) {
+                alert('Error parsing JSON: ' + err.message);
+              }
+            }
+          }, '📥 Paste & Import')
+        ),
+
         // Download JSON button
         h('button', {
           type: 'button',
@@ -4453,6 +4485,16 @@
           style: { width: '100%', marginBottom: '14px', fontSize: '12px' },
           onClick: handleDownloadJson
         }, '💾 Export data/shared_store.json'),
+
+        // Wi-Fi Live Sync Box
+        h('div', { className: 'stat-widget', style: { marginBottom: '14px', background: 'rgba(0, 245, 155, 0.05)', borderColor: 'rgba(0, 245, 155, 0.2)' } },
+          h('div', { style: { fontSize: '12px', color: 'var(--neon-green)', fontWeight: 700, marginBottom: '4px' } }, '📶 Wi-Fi Instant Live Sync'),
+          h('div', { style: { fontSize: '11.5px', color: 'var(--text-muted)', lineHeight: 1.5 } },
+            'When both devices are on the same home Wi-Fi, open ',
+            h('strong', { style: { color: '#fff' } }, 'http://10.216.40.100:3000'),
+            ' on your phone. Any addition or edit updates both screens in real-time.'
+          )
+        ),
 
         // Advanced Settings Expandable
         h('div', { style: { borderTop: '1px solid var(--border-subtle)', paddingTop: '12px' } },
