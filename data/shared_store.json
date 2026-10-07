@@ -1,5 +1,5 @@
 {
-  "timestamp": 1791279200000,
+  "timestamp": 1791279300000,
   "profile": {
     "id": "user-default-1",
     "name": "Radhadevan",
@@ -213,9 +213,9 @@
     { "id": "rec-6", "name": "Home Expenses", "amount": 500, "type": "EXPENSE", "categoryId": "cat-bills", "paymentAccount": "Cash", "frequency": "MONTHLY", "dueDay": 25, "nextDueDate": "2026-10-25", "autoAdd": false, "reminder": true, "isPaid": false }
   ],
   "accounts": [
-    { "id": "acc-1", "name": "HDFC Bank Account", "type": "Bank", "lastFour": "1234", "balance": 15000 },
-    { "id": "acc-2", "name": "Google Pay UPI", "type": "UPI", "lastFour": "", "balance": 0 },
-    { "id": "acc-3", "name": "Cash in Hand", "type": "Cash", "lastFour": "", "balance": 2500 }
+    { "id": "acc-1", "name": "HDFC Bank Account", "type": "Bank", lastFour: "1234", balance: 15000 },
+    { "id": "acc-2", "name": "Google Pay UPI", "type": "UPI", lastFour: "", balance: 0 },
+    { "id": "acc-3", "name": "Cash in Hand", "type": "Cash", lastFour: "", balance: 2500 }
   ],
   "appLock": { "enabled": false, "pin": "" }
 }

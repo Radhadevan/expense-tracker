@@ -27,6 +27,20 @@
     DATA_SYNC: 'exptrk_data_sync_v1'
   };
 
+  // --- SYNC HOST CONFIGURATION (Supports LAN IP for Phone & Android APK) ---
+  const DEFAULT_SYNC_HOST = 'http://10.216.40.100:3000';
+
+  function getSyncServerBaseUrl() {
+    if (typeof window !== 'undefined' && window.location && window.location.origin && window.location.origin.startsWith('http')) {
+      return window.location.origin;
+    }
+    try {
+      const saved = localStorage.getItem('exptrk_sync_server_url');
+      if (saved && saved.trim()) return saved.trim().replace(/\/$/, '');
+    } catch {}
+    return DEFAULT_SYNC_HOST;
+  }
+
   // --- CURRENCY OPTIONS ---
   const SUPPORTED_CURRENCIES = [
     { code: 'INR', symbol: '₹', label: '₹ INR (Indian Rupee)' },
@@ -873,13 +887,13 @@
     }, [supabaseConfig]);
 
     // --- LIVE CROSS-DEVICE SYNC ENGINE (Instant Phone & Desktop Sync) ---
-    const pushCurrentStateToServer = useCallback(() => {
+    const pushCurrentStateToServer = useCallback((customTxns) => {
       if (isApplyingIncomingSyncRef.current) return;
 
       const payload = {
         timestamp: Date.now(),
         profile,
-        transactions,
+        transactions: customTxns || transactions,
         categories,
         goals,
         contributions,
@@ -890,7 +904,7 @@
         appLock: { enabled: appLock.enabled, pin: appLock.pin }
       };
 
-      fetch('/api/sync-data', {
+      fetch(getSyncServerBaseUrl() + '/api/sync-data', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
@@ -911,7 +925,7 @@
     const checkRemoteUpdates = useCallback(async () => {
       if (isApplyingIncomingSyncRef.current) return;
       try {
-        const res = await fetch('/api/sync-meta?_t=' + Date.now(), { cache: 'no-store' });
+        const res = await fetch(getSyncServerBaseUrl() + '/api/sync-meta?_t=' + Date.now(), { cache: 'no-store' });
         if (!res.ok) {
           setLiveSyncConnected(false);
           return;
@@ -920,7 +934,7 @@
         setLiveSyncConnected(true);
 
         if (meta && meta.timestamp && meta.timestamp > lastSyncedTicksRef.current) {
-          const dataRes = await fetch('/api/sync-data?_t=' + Date.now(), { cache: 'no-store' });
+          const dataRes = await fetch(getSyncServerBaseUrl() + '/api/sync-data?_t=' + Date.now(), { cache: 'no-store' });
           if (!dataRes.ok) return;
           const data = await dataRes.json();
 
@@ -953,14 +967,31 @@
       let isMounted = true;
       async function initialSync() {
         try {
-          const res = await fetch('/api/sync-data?_t=' + Date.now(), { cache: 'no-store' });
-          if (!res.ok) return;
+          const res = await fetch(getSyncServerBaseUrl() + '/api/sync-data?_t=' + Date.now(), { cache: 'no-store' });
+          if (!res.ok) {
+            setLiveSyncConnected(false);
+            return;
+          }
           const data = await res.json();
           if (!isMounted) return;
 
           if (data && data.transactions && Array.isArray(data.transactions) && data.transactions.length > 0) {
+            // Smart merge: if local storage has any transactions not on server, combine them
+            const serverTxns = data.transactions;
+            const localTxns = transactions || [];
+            const txnMap = new Map();
+            serverTxns.forEach((t) => txnMap.set(t.id, t));
+            let hasNewLocal = false;
+            localTxns.forEach((t) => {
+              if (!txnMap.has(t.id)) {
+                txnMap.set(t.id, t);
+                hasNewLocal = true;
+              }
+            });
+            const finalTxns = Array.from(txnMap.values());
+
             isApplyingIncomingSyncRef.current = true;
-            if (data.transactions) setTransactions(data.transactions);
+            setTransactions(finalTxns);
             if (data.goals) setGoals(data.goals);
             if (data.contributions) setContributions(data.contributions);
             if (data.monthlyBudgetLimit !== undefined) setMonthlyBudgetLimit(data.monthlyBudgetLimit);
@@ -973,6 +1004,13 @@
             lastSyncedTicksRef.current = data.timestamp || Date.now();
             setLiveSyncConnected(true);
             setLastSyncTime(new Date());
+
+            if (hasNewLocal) {
+              setTimeout(() => {
+                pushCurrentStateToServer(finalTxns);
+              }, 400);
+            }
+
             setTimeout(() => {
               isApplyingIncomingSyncRef.current = false;
             }, 300);
@@ -4125,6 +4163,13 @@
     const [showAdvanced, setShowAdvanced] = useState(false);
     const [url, setUrl] = useState(config.url || '');
     const [anonKey, setAnonKey] = useState(config.anonKey || '');
+    const [syncHost, setSyncHost] = useState(() => {
+      try {
+        return localStorage.getItem('exptrk_sync_server_url') || getSyncServerBaseUrl();
+      } catch {
+        return getSyncServerBaseUrl();
+      }
+    });
 
     const handleSave = () => {
       onSave({
@@ -4149,13 +4194,42 @@
           h('div', { style: { display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '6px' } },
             h('span', { className: `sync-dot ${liveSyncConnected ? '' : 'offline'}` }),
             h('strong', { style: { color: '#fff', fontSize: '14px' } },
-              liveSyncConnected ? 'Live Multi-Device Sync Active 🟢' : 'Local Storage Mode'
+              liveSyncConnected ? 'Live Multi-Device Sync Active 🟢' : 'Connecting to Server...'
             )
           ),
           h('div', { style: { fontSize: '12.5px', color: 'var(--text-muted)', lineHeight: 1.5 } },
             liveSyncConnected
-              ? 'Changes made on mobile or desktop are automatically updated in real-time.'
-              : 'App is running standalone in browser storage. Connect via http://10.216.40.100:3000 to enable real-time phone sync.'
+              ? 'Changes made on mobile or desktop are automatically updated across all devices in real-time.'
+              : 'Connecting to Wi-Fi server. Make sure your phone is connected to the same Wi-Fi network as your PC.'
+          )
+        ),
+
+        // Wi-Fi Host IP Configuration
+        h('div', { className: 'form-group', style: { marginBottom: '14px' } },
+          h('label', { className: 'form-label' }, 'Wi-Fi Sync Server Address'),
+          h('div', { style: { display: 'flex', gap: '8px' } },
+            h('input', {
+              type: 'text',
+              className: 'form-input',
+              style: { flex: 1, fontSize: '13px' },
+              value: syncHost,
+              placeholder: 'http://10.216.40.100:3000',
+              onChange: (e) => setSyncHost(e.target.value)
+            }),
+            h('button', {
+              type: 'button',
+              className: 'submit-btn',
+              style: { padding: '8px 12px', fontSize: '12px', whiteSpace: 'nowrap' },
+              onClick: () => {
+                if (syncHost.trim()) {
+                  localStorage.setItem('exptrk_sync_server_url', syncHost.trim());
+                }
+                if (onForceSync) onForceSync();
+              }
+            }, 'Save & Reconnect')
+          ),
+          h('div', { style: { fontSize: '11px', color: 'var(--text-dim)', marginTop: '4px' } },
+            'Default PC Address: http://10.216.40.100:3000'
           )
         ),
 

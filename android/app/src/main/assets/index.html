@@ -75,9 +75,15 @@
   <script>
     (function initLiveReload() {
       let lastStamp = null;
+      function getReloadBaseUrl() {
+        if (window.location && window.location.origin && window.location.origin.startsWith('http')) {
+          return window.location.origin;
+        }
+        return localStorage.getItem('exptrk_sync_server_url') || 'http://10.216.40.100:3000';
+      }
       async function poll() {
         try {
-          const res = await fetch('/live-reload-check?_t=' + Date.now(), { cache: 'no-store' });
+          const res = await fetch(getReloadBaseUrl() + '/live-reload-check?_t=' + Date.now(), { cache: 'no-store' });
           if (res.ok) {
             const stamp = (await res.text()).trim();
             if (lastStamp !== null && stamp && stamp !== lastStamp) {
