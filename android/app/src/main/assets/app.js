@@ -939,6 +939,7 @@
     const [developerMode, setDeveloperMode] = useState(false);
     const [isAddAccountOpen, setIsAddAccountOpen] = useState(false);
     const [isAddRecurringOpen, setIsAddRecurringOpen] = useState(false);
+    const [editingRecurring, setEditingRecurring] = useState(null);
 
     // Online / Offline State (Requirement #9)
     const [isOnline, setIsOnline] = useState(navigator.onLine);
@@ -1705,16 +1706,33 @@
       );
     };
 
-    // Save Recurring Payment Entry
+    // Save or Edit Recurring Payment Entry
     const handleSaveRecurringPayment = (paymentData) => {
-      const newRec = {
-        id: 'rec-' + Date.now(),
-        ...paymentData,
-        isPaid: false
-      };
-      setRecurringPayments((prev) => [...prev, newRec]);
+      if (editingRecurring) {
+        setRecurringPayments((prev) =>
+          prev.map((r) => (r.id === editingRecurring.id ? { ...r, ...paymentData } : r))
+        );
+        setIsAddRecurringOpen(false);
+        setEditingRecurring(null);
+        showToast(`Updated recurring obligation: ${paymentData.name}`);
+      } else {
+        const newRec = {
+          id: 'rec-' + Date.now(),
+          ...paymentData,
+          isPaid: false
+        };
+        setRecurringPayments((prev) => [...prev, newRec]);
+        setIsAddRecurringOpen(false);
+        showToast(`Added recurring obligation: ${newRec.name}`);
+      }
+    };
+
+    // Delete Recurring Payment Entry
+    const handleDeleteRecurringPayment = (id) => {
+      setRecurringPayments((prev) => prev.filter((r) => r.id !== id));
       setIsAddRecurringOpen(false);
-      showToast(`Added recurring obligation: ${newRec.name}`);
+      setEditingRecurring(null);
+      showToast('Deleted recurring obligation.');
     };
 
     // Reset Sample Data (Developer Mode Only)
@@ -1886,7 +1904,16 @@
             : h('div', { className: 'upcoming-list' },
                 stats.upcomingPayments.map((p) => {
                   const cat = categories.find((c) => c.id === p.categoryId) || { icon: '💳' };
-                  return h('div', { key: p.id, className: 'upcoming-item' },
+                  return h('div', {
+                    key: p.id,
+                    className: 'upcoming-item',
+                    style: { cursor: 'pointer' },
+                    title: 'Tap to edit obligation',
+                    onClick: () => {
+                      setEditingRecurring(p);
+                      setIsAddRecurringOpen(true);
+                    }
+                  },
                     h('div', { className: 'upcoming-item-left' },
                       h('div', { className: 'upcoming-item-icon' }, cat.icon),
                       h('div', null,
@@ -2642,6 +2669,14 @@
     // 5. RECURRING OBLIGATIONS VIEW (Requirement #3)
     // =========================================================================
     const renderFixedPaymentsView = () => {
+      const getOrdinalDay = (day) => {
+        const n = parseInt(day, 10);
+        if (!n) return day || '1st';
+        const s = ['th', 'st', 'nd', 'rd'];
+        const v = n % 100;
+        return n + (s[(v - 20) % 10] || s[v] || s[0]);
+      };
+
       return h('div', { className: 'page-view' },
         h('div', { className: 'section-header' },
           h('div', { className: 'section-title' },
@@ -2651,20 +2686,48 @@
           h('button', {
             type: 'button',
             className: 'today-jump-btn',
-            onClick: () => setIsAddRecurringOpen(true)
+            onClick: () => {
+              setEditingRecurring(null);
+              setIsAddRecurringOpen(true);
+            }
           }, '➕ Add Recurring')
         ),
 
         h('div', { className: 'txn-list' },
           recurringPayments.map((p) => {
             const cat = categories.find((c) => c.id === p.categoryId) || { icon: '💳' };
-            return h('div', { key: p.id, className: 'txn-card' },
+            const accountLabel = p.paymentAccount || 'Bank';
+            const freqLabel = p.frequency
+              ? p.frequency.charAt(0).toUpperCase() + p.frequency.slice(1).toLowerCase()
+              : 'Monthly';
+
+            return h('div', {
+              key: p.id,
+              className: 'txn-card',
+              style: { cursor: 'pointer' },
+              title: 'Tap to edit obligation details',
+              onClick: () => {
+                setEditingRecurring(p);
+                setIsAddRecurringOpen(true);
+              }
+            },
               h('div', { className: 'txn-left' },
                 h('div', { className: 'txn-cat-icon' }, cat.icon),
                 h('div', null,
-                  h('div', { style: { fontSize: '15px', fontWeight: 800, color: '#fff' } }, p.name),
-                  h('div', { style: { fontSize: '12px', color: 'var(--text-dim)', marginTop: '2px' } },
-                    `Due ${p.dueDay}th of month · ${p.frequency} · ${p.autoAdd ? '⚡ Auto-add ON' : 'Manual'}`
+                  h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px' } },
+                    h('span', { style: { fontSize: '15px', fontWeight: 800, color: '#fff' } }, p.name),
+                    h('span', {
+                      style: {
+                        fontSize: '11px',
+                        color: 'var(--text-dim)',
+                        padding: '1px 6px',
+                        background: 'rgba(255, 255, 255, 0.06)',
+                        borderRadius: '4px'
+                      }
+                    }, '✏️ Edit')
+                  ),
+                  h('div', { style: { fontSize: '12px', color: 'var(--text-dim)', marginTop: '3px' } },
+                    `Due ${getOrdinalDay(p.dueDay)} · ${freqLabel} · ${accountLabel} · ${p.autoAdd ? '⚡ Auto-add' : 'Manual'}`
                   )
                 )
               ),
@@ -2678,7 +2741,10 @@
                     color: p.isPaid ? 'var(--neon-green)' : 'var(--text-muted)',
                     marginTop: '6px'
                   },
-                  onClick: () => handleToggleRecurringPayment(p.id)
+                  onClick: (e) => {
+                    e.stopPropagation();
+                    handleToggleRecurringPayment(p.id);
+                  }
                 }, p.isPaid ? '✓ Paid' : '⏳ Mark Paid')
               )
             );
@@ -3350,7 +3416,7 @@
       });
     };
 
-    // Create Recurring Transaction Modal
+    // Create or Edit Recurring Transaction Modal
     const renderRecurringModal = () => {
       if (!isAddRecurringOpen) return null;
 
@@ -3358,8 +3424,13 @@
         categories,
         accounts,
         currency: profile.currency,
-        onClose: () => setIsAddRecurringOpen(false),
-        onSave: handleSaveRecurringPayment
+        initialData: editingRecurring,
+        onClose: () => {
+          setIsAddRecurringOpen(false);
+          setEditingRecurring(null);
+        },
+        onSave: handleSaveRecurringPayment,
+        onDelete: handleDeleteRecurringPayment
       });
     };
 
@@ -4655,16 +4726,17 @@
     );
   }
 
-  // Create Recurring Transaction Modal Dialog (Requirement #3)
-  function CreateRecurringModalDialog({ categories, accounts, currency, onClose, onSave }) {
-    const [name, setName] = useState('');
-    const [amount, setAmount] = useState('');
-    const [type, setType] = useState('EXPENSE');
-    const [categoryId, setCategoryId] = useState('cat-bills');
-    const [paymentAccount, setPaymentAccount] = useState('Bank');
-    const [frequency, setFrequency] = useState('MONTHLY');
-    const [dueDay, setDueDay] = useState('5');
-    const [autoAdd, setAutoAdd] = useState(true);
+  // Create / Edit Recurring Transaction Modal Dialog (Requirement #3)
+  function CreateRecurringModalDialog({ categories, accounts, currency, initialData, onClose, onSave, onDelete }) {
+    const isEditing = Boolean(initialData);
+    const [name, setName] = useState(initialData?.name || '');
+    const [amount, setAmount] = useState(initialData?.amount ? String(initialData.amount) : '');
+    const [type, setType] = useState(initialData?.type || 'EXPENSE');
+    const [categoryId, setCategoryId] = useState(initialData?.categoryId || (categories[0]?.id || 'cat-bills'));
+    const [paymentAccount, setPaymentAccount] = useState(initialData?.paymentAccount || (accounts[0]?.name || 'Bank'));
+    const [frequency, setFrequency] = useState(initialData?.frequency || 'MONTHLY');
+    const [dueDay, setDueDay] = useState(initialData?.dueDay ? String(initialData.dueDay) : '5');
+    const [autoAdd, setAutoAdd] = useState(initialData?.autoAdd !== undefined ? initialData.autoAdd : true);
 
     const handleSubmit = (e) => {
       e.preventDefault();
@@ -4684,12 +4756,18 @@
       });
     };
 
+    const handleDelete = () => {
+      if (confirm(`Are you sure you want to delete "${initialData.name}"?`)) {
+        onDelete(initialData.id);
+      }
+    };
+
     return h('div', { className: 'modal-backdrop' },
       h('div', { className: 'bottom-sheet-card', style: { maxWidth: '440px' } },
         h('div', { className: 'sheet-header' },
           h('div', { className: 'sheet-title' },
-            h('span', null, '📅'),
-            ' Add Recurring Transaction'
+            h('span', null, isEditing ? '✏️' : '📅'),
+            isEditing ? ' Edit Recurring Obligation' : ' Add Recurring Transaction'
           ),
           h('button', { type: 'button', className: 'sheet-close-btn', onClick: onClose }, '✕')
         ),
@@ -4700,7 +4778,7 @@
             h('input', {
               type: 'text',
               required: true,
-              placeholder: 'e.g. Netflix, Gym, Rent, Bike EMI, Salary',
+              placeholder: 'e.g. Bike EMI, Rent, Gym, Netflix, Internet',
               className: 'form-input',
               value: name,
               onChange: (e) => setName(e.target.value)
@@ -4713,6 +4791,8 @@
               h('input', {
                 type: 'number',
                 required: true,
+                min: '1',
+                step: 'any',
                 className: 'form-input',
                 value: amount,
                 onChange: (e) => setAmount(e.target.value)
@@ -4734,14 +4814,37 @@
 
           h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' } },
             h('div', { className: 'form-group' },
+              h('label', { className: 'form-label' }, 'Category'),
+              h('select', {
+                className: 'form-select',
+                value: categoryId,
+                onChange: (e) => setCategoryId(e.target.value)
+              },
+                categories.map((c) => h('option', { key: c.id, value: c.id }, `${c.icon} ${c.name}`))
+              )
+            ),
+            h('div', { className: 'form-group' },
+              h('label', { className: 'form-label' }, 'Payment Account'),
+              h('select', {
+                className: 'form-select',
+                value: paymentAccount,
+                onChange: (e) => setPaymentAccount(e.target.value)
+              },
+                accounts.map((a) => h('option', { key: a.id, value: a.name }, a.name))
+              )
+            )
+          ),
+
+          h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' } },
+            h('div', { className: 'form-group' },
               h('label', { className: 'form-label' }, 'Frequency'),
               h('select', {
                 className: 'form-select',
                 value: frequency,
                 onChange: (e) => setFrequency(e.target.value)
               },
-                h('option', { value: 'WEEKLY' }, 'Weekly'),
                 h('option', { value: 'MONTHLY' }, 'Monthly'),
+                h('option', { value: 'WEEKLY' }, 'Weekly'),
                 h('option', { value: 'QUARTERLY' }, 'Quarterly'),
                 h('option', { value: 'YEARLY' }, 'Yearly')
               )
@@ -4752,6 +4855,7 @@
                 type: 'number',
                 min: '1',
                 max: '31',
+                required: true,
                 className: 'form-input',
                 value: dueDay,
                 onChange: (e) => setDueDay(e.target.value)
@@ -4767,13 +4871,20 @@
               onChange: (e) => setAutoAdd(e.target.checked)
             }),
             h('label', { htmlFor: 'recAutoAdd', style: { color: '#fff', fontSize: '13px', cursor: 'pointer' } },
-              'Auto-create transaction when due'
+              '⚡ Auto-create transaction when due'
             )
           ),
 
-          h('div', { className: 'sheet-actions' },
+          h('div', { className: 'sheet-actions', style: { display: 'flex', gap: '8px', justifyContent: 'flex-end' } },
+            isEditing &&
+              h('button', {
+                type: 'button',
+                className: 'cancel-btn',
+                style: { background: 'rgba(239, 68, 68, 0.15)', color: 'var(--overspent-red)', border: '1px solid rgba(239, 68, 68, 0.3)', marginRight: 'auto' },
+                onClick: handleDelete
+              }, '🗑️ Delete'),
             h('button', { type: 'button', className: 'cancel-btn', onClick: onClose }, 'Cancel'),
-            h('button', { type: 'submit', className: 'submit-btn' }, 'Save Obligation')
+            h('button', { type: 'submit', className: 'submit-btn' }, isEditing ? '💾 Save Changes' : '➕ Save Obligation')
           )
         )
       )

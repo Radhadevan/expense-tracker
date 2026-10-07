@@ -1,11 +1,11 @@
-const CACHE_NAME = 'exptrk-v4.1';
+const CACHE_NAME = 'exptrk-v4.2';
 const ASSETS = [
   './',
   './index.html',
-  './style.css?v=4.1',
-  './sms-parser.js?v=4.1',
-  './sms-bridge.js?v=4.1',
-  './app.js?v=4.1',
+  './style.css?v=4.2',
+  './sms-parser.js?v=4.2',
+  './sms-bridge.js?v=4.2',
+  './app.js?v=4.2',
   './manifest.json',
   './icon.svg',
   'https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap',
