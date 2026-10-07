@@ -17,7 +17,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
   
-  <link rel="stylesheet" href="style.css?v=3.0">
+  <link rel="stylesheet" href="style.css?v=4.0">
   
   <!-- React 18 & ReactDOM Production UMD Bundles -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
@@ -29,7 +29,7 @@
   <!-- jsPDF & AutoTable for Clean Monthly Statement Exports -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
-  <script src="pdf-generator.js?v=3.0"></script>
+  <script src="pdf-generator.js?v=4.0"></script>
 </head>
 <body>
   <!-- APPLICATION MOUNT ROOT -->
@@ -47,17 +47,17 @@
   </div>
 
   <!-- SMS TRANSACTION DETECTION & ANDROID NATIVE BRIDGE -->
-  <script src="sms-parser.js?v=3.0"></script>
-  <script src="sms-bridge.js?v=3.0"></script>
+  <script src="sms-parser.js?v=4.0"></script>
+  <script src="sms-bridge.js?v=4.0"></script>
 
   <!-- MAIN REACT APPLICATION LOGIC -->
-  <script src="app.js?v=3.0"></script>
+  <script src="app.js?v=4.0"></script>
 
   <!-- PWA SERVICE WORKER REGISTRATION -->
   <script>
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
-        navigator.serviceWorker.register('./service-worker.js?v=3.0')
+        navigator.serviceWorker.register('./service-worker.js?v=4.0')
           .then((reg) => {
             console.log('[PWA] Service Worker registered with scope:', reg.scope);
             try { reg.update(); } catch (e) {}

@@ -27,7 +27,12 @@
     DATA_SYNC: 'exptrk_data_sync_v1'
   };
 
-  // --- SYNC HOST CONFIGURATION (Supports LAN IP for Phone & Android APK) ---
+  // --- GIT REPOSITORY CONFIGURATION (Direct Cloud Sync via GitHub & Raw CDN) ---
+  const GITHUB_REPO = 'Radhadevan/expense-tracker';
+  const GITHUB_BRANCH = 'main';
+  const GITHUB_RAW_URL = `https://raw.githubusercontent.com/${GITHUB_REPO}/${GITHUB_BRANCH}/data/shared_store.json`;
+  const GITHUB_COMMITS_API = `https://api.github.com/repos/${GITHUB_REPO}/commits?path=data/shared_store.json&page=1&per_page=1`;
+  const LOCAL_STORE_URL = './data/shared_store.json';
   const DEFAULT_SYNC_HOST = 'http://10.216.40.100:3000';
 
   function getSyncServerBaseUrl() {
@@ -39,6 +44,88 @@
       if (saved && saved.trim()) return saved.trim().replace(/\/$/, '');
     } catch {}
     return DEFAULT_SYNC_HOST;
+  }
+
+  // Universal Git-first data fetcher: reads directly from GitHub Pages or raw.githubusercontent.com
+  async function fetchGitSharedData() {
+    const cacheBuster = Date.now();
+
+    // Strategy 1: Local / GitHub Pages relative path (fastest)
+    try {
+      const res = await fetch(`${LOCAL_STORE_URL}?_t=${cacheBuster}`, { cache: 'no-store' });
+      if (res.ok) {
+        const json = await res.json();
+        if (json && (json.transactions || json.profile)) return json;
+      }
+    } catch (_) {}
+
+    // Strategy 2: Direct raw.githubusercontent.com (works globally across any phone/network)
+    try {
+      const res = await fetch(`${GITHUB_RAW_URL}?_t=${cacheBuster}`, { cache: 'no-store' });
+      if (res.ok) {
+        const json = await res.json();
+        if (json && (json.transactions || json.profile)) return json;
+      }
+    } catch (_) {}
+
+    // Strategy 3: Local dev server if active
+    try {
+      const base = getSyncServerBaseUrl();
+      const res = await fetch(`${base}/api/sync-data?_t=${cacheBuster}`, { cache: 'no-store' });
+      if (res.ok) {
+        const json = await res.json();
+        if (json && (json.transactions || json.profile)) return json;
+      }
+    } catch (_) {}
+
+    return null;
+  }
+
+  // Universal Git commit pusher: commits data/shared_store.json directly to GitHub repository
+  async function commitToGitHub(token, storeData) {
+    if (!token) throw new Error('No GitHub Personal Access Token provided');
+    const trimmedToken = token.trim();
+
+    // 1. Fetch current file SHA from GitHub Contents API
+    let sha = null;
+    try {
+      const getRes = await fetch(`https://api.github.com/repos/${GITHUB_REPO}/contents/data/shared_store.json?ref=${GITHUB_BRANCH}&_t=${Date.now()}`, {
+        headers: {
+          'Authorization': `Bearer ${trimmedToken}`,
+          'Accept': 'application/vnd.github.v3+json'
+        }
+      });
+      if (getRes.ok) {
+        const fileInfo = await getRes.json();
+        sha = fileInfo.sha;
+      }
+    } catch (_) {}
+
+    // 2. Base64 UTF-8 encoding
+    const jsonStr = JSON.stringify(storeData, null, 2);
+    const base64Content = btoa(unescape(encodeURIComponent(jsonStr)));
+
+    // 3. Commit PUT request
+    const putRes = await fetch(`https://api.github.com/repos/${GITHUB_REPO}/contents/data/shared_store.json`, {
+      method: 'PUT',
+      headers: {
+        'Authorization': `Bearer ${trimmedToken}`,
+        'Accept': 'application/vnd.github.v3+json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        message: `Update expense tracker data (${new Date().toLocaleDateString('en-GB')}) [skip ci]`,
+        content: base64Content,
+        branch: GITHUB_BRANCH,
+        sha: sha || undefined
+      })
+    });
+
+    if (!putRes.ok) {
+      const errObj = await putRes.json().catch(() => ({}));
+      throw new Error(errObj.message || `GitHub API error: ${putRes.status}`);
+    }
+    return await putRes.json();
   }
 
   // --- CURRENCY OPTIONS ---
@@ -820,6 +907,8 @@
     const lastSyncedTicksRef = useRef(0);
     const pushTimeoutRef = useRef(null);
     const isInitialMountRef = useRef(true);
+    const transactionsRef = useRef(transactions);
+    transactionsRef.current = transactions;
 
     // Filter states on Transactions Page
     const [txnSearch, setTxnSearch] = useState('');
@@ -886,8 +975,72 @@
       localStorage.setItem(STORAGE_KEYS.SUPABASE_CONFIG, JSON.stringify(supabaseConfig));
     }, [supabaseConfig]);
 
-    // --- LIVE CROSS-DEVICE SYNC ENGINE (Instant Phone & Desktop Sync) ---
-    const pushCurrentStateToServer = useCallback((customTxns) => {
+    // --- GIT-FIRST DATA SYNCHRONIZATION ENGINE ---
+    // Synchronizes financial data directly through the Git repository (data/shared_store.json)
+    // Supports GitHub Pages, raw.githubusercontent CDN, and direct mobile-to-Git commits
+
+    const applyIncomingData = useCallback((data, isManual = false) => {
+      if (!data) return;
+
+      const remoteTxns = Array.isArray(data.transactions) ? data.transactions : [];
+      if (remoteTxns.length === 0 && !data.profile && !data.goals) return;
+
+      // Smart merge transactions: remote transactions are source of truth, but keep any offline local additions
+      const localTxns = transactionsRef.current || [];
+      const txnMap = new Map();
+      remoteTxns.forEach((t) => txnMap.set(t.id, t));
+      let hasNewLocal = false;
+      localTxns.forEach((t) => {
+        if (!txnMap.has(t.id)) {
+          txnMap.set(t.id, t);
+          hasNewLocal = true;
+        }
+      });
+      const finalTxns = Array.from(txnMap.values());
+
+      isApplyingIncomingSyncRef.current = true;
+      setTransactions(finalTxns);
+      if (data.goals) setGoals(data.goals);
+      if (data.contributions) setContributions(data.contributions);
+      if (data.monthlyBudgetLimit !== undefined) setMonthlyBudgetLimit(data.monthlyBudgetLimit);
+      if (data.categoryBudgets) setCategoryBudgets(data.categoryBudgets);
+      if (data.recurringPayments) setRecurringPayments(data.recurringPayments);
+      if (data.accounts) setAccounts(data.accounts);
+      if (data.categories) setCategories(data.categories);
+      if (data.profile) setProfile(data.profile);
+
+      lastSyncedTicksRef.current = data.timestamp || Date.now();
+      setLiveSyncConnected(true);
+      setLastSyncTime(new Date());
+
+      setTimeout(() => {
+        isApplyingIncomingSyncRef.current = false;
+      }, 400);
+
+      if (isManual) {
+        showToast(`🟢 Synced with Git (${finalTxns.length} transactions)`);
+      }
+    }, [showToast]);
+
+    const pullFromGit = useCallback(async (isManual = false) => {
+      try {
+        if (isManual) showToast('Fetching latest data from Git repository...');
+        const data = await fetchGitSharedData();
+        if (data && (data.transactions || data.profile)) {
+          applyIncomingData(data, isManual);
+          return true;
+        } else {
+          if (isManual) showToast('⚠️ Unable to reach Git data file.');
+          return false;
+        }
+      } catch (err) {
+        console.warn('[GitSync] Pull error:', err);
+        if (isManual) showToast('⚠️ Git sync error: ' + (err.message || 'Network issue'));
+        return false;
+      }
+    }, [applyIncomingData, showToast]);
+
+    const pushCurrentStateToServer = useCallback(async (customTxns) => {
       if (isApplyingIncomingSyncRef.current) return;
 
       const payload = {
@@ -904,128 +1057,70 @@
         appLock: { enabled: appLock.enabled, pin: appLock.pin }
       };
 
-      fetch(getSyncServerBaseUrl() + '/api/sync-data', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      })
-        .then((r) => r.json())
-        .then((res) => {
-          if (res && res.status === 'ok') {
-            lastSyncedTicksRef.current = res.timestamp || Date.now();
+      // 1. If running with local dev server, write to disk
+      try {
+        const base = getSyncServerBaseUrl();
+        if (base && !base.includes('github.io')) {
+          const res = await fetch(base + '/api/sync-data', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+          if (res.ok) {
+            const json = await res.json();
+            lastSyncedTicksRef.current = json.timestamp || Date.now();
             setLiveSyncConnected(true);
             setLastSyncTime(new Date());
           }
-        })
-        .catch(() => {
-          setLiveSyncConnected(false);
-        });
+        }
+      } catch (_) {}
+
+      // 2. If GitHub PAT is stored, commit directly to GitHub repository
+      try {
+        const ghToken = localStorage.getItem('exptrk_github_pat');
+        if (ghToken && ghToken.trim()) {
+          await commitToGitHub(ghToken.trim(), payload);
+          lastSyncedTicksRef.current = payload.timestamp;
+          setLiveSyncConnected(true);
+          setLastSyncTime(new Date());
+        }
+      } catch (err) {
+        console.warn('[GitSync] Push warning:', err);
+      }
     }, [profile, transactions, categories, goals, contributions, monthlyBudgetLimit, categoryBudgets, recurringPayments, accounts, appLock]);
 
     const checkRemoteUpdates = useCallback(async () => {
       if (isApplyingIncomingSyncRef.current) return;
       try {
-        const res = await fetch(getSyncServerBaseUrl() + '/api/sync-meta?_t=' + Date.now(), { cache: 'no-store' });
-        if (!res.ok) {
-          setLiveSyncConnected(false);
-          return;
-        }
-        const meta = await res.json();
-        setLiveSyncConnected(true);
-
-        if (meta && meta.timestamp && meta.timestamp > lastSyncedTicksRef.current) {
-          const dataRes = await fetch(getSyncServerBaseUrl() + '/api/sync-data?_t=' + Date.now(), { cache: 'no-store' });
-          if (!dataRes.ok) return;
-          const data = await dataRes.json();
-
-          if (data && data.transactions && Array.isArray(data.transactions)) {
-            isApplyingIncomingSyncRef.current = true;
-            if (data.transactions) setTransactions(data.transactions);
-            if (data.goals) setGoals(data.goals);
-            if (data.contributions) setContributions(data.contributions);
-            if (data.monthlyBudgetLimit !== undefined) setMonthlyBudgetLimit(data.monthlyBudgetLimit);
-            if (data.categoryBudgets) setCategoryBudgets(data.categoryBudgets);
-            if (data.recurringPayments) setRecurringPayments(data.recurringPayments);
-            if (data.accounts) setAccounts(data.accounts);
-            if (data.categories) setCategories(data.categories);
-            if (data.profile) setProfile(data.profile);
-
-            lastSyncedTicksRef.current = meta.timestamp;
-            setLastSyncTime(new Date());
-            setTimeout(() => {
-              isApplyingIncomingSyncRef.current = false;
-            }, 300);
+        const data = await fetchGitSharedData();
+        if (data && (data.transactions || data.profile)) {
+          setLiveSyncConnected(true);
+          if (data.timestamp && data.timestamp > lastSyncedTicksRef.current) {
+            applyIncomingData(data, false);
           }
         }
       } catch (err) {
-        setLiveSyncConnected(false);
+        // network drop, maintain local state
       }
-    }, []);
+    }, [applyIncomingData]);
 
-    // Initial mount hydration: sync shared store from server
+    // Initial mount hydration: sync shared store directly from Git
     useEffect(() => {
       let isMounted = true;
       async function initialSync() {
         try {
-          const res = await fetch(getSyncServerBaseUrl() + '/api/sync-data?_t=' + Date.now(), { cache: 'no-store' });
-          if (!res.ok) {
-            setLiveSyncConnected(false);
-            return;
-          }
-          const data = await res.json();
+          const data = await fetchGitSharedData();
           if (!isMounted) return;
-
-          if (data && data.transactions && Array.isArray(data.transactions) && data.transactions.length > 0) {
-            // Smart merge: if local storage has any transactions not on server, combine them
-            const serverTxns = data.transactions;
-            const localTxns = transactions || [];
-            const txnMap = new Map();
-            serverTxns.forEach((t) => txnMap.set(t.id, t));
-            let hasNewLocal = false;
-            localTxns.forEach((t) => {
-              if (!txnMap.has(t.id)) {
-                txnMap.set(t.id, t);
-                hasNewLocal = true;
-              }
-            });
-            const finalTxns = Array.from(txnMap.values());
-
-            isApplyingIncomingSyncRef.current = true;
-            setTransactions(finalTxns);
-            if (data.goals) setGoals(data.goals);
-            if (data.contributions) setContributions(data.contributions);
-            if (data.monthlyBudgetLimit !== undefined) setMonthlyBudgetLimit(data.monthlyBudgetLimit);
-            if (data.categoryBudgets) setCategoryBudgets(data.categoryBudgets);
-            if (data.recurringPayments) setRecurringPayments(data.recurringPayments);
-            if (data.accounts) setAccounts(data.accounts);
-            if (data.categories) setCategories(data.categories);
-            if (data.profile) setProfile(data.profile);
-
-            lastSyncedTicksRef.current = data.timestamp || Date.now();
-            setLiveSyncConnected(true);
-            setLastSyncTime(new Date());
-
-            if (hasNewLocal) {
-              setTimeout(() => {
-                pushCurrentStateToServer(finalTxns);
-              }, 400);
-            }
-
-            setTimeout(() => {
-              isApplyingIncomingSyncRef.current = false;
-            }, 300);
-          } else if (data && data.empty) {
-            pushCurrentStateToServer();
+          if (data && (data.transactions || data.profile)) {
+            applyIncomingData(data, false);
           }
-        } catch (err) {
-          setLiveSyncConnected(false);
-        }
+        } catch (_) {}
       }
       initialSync();
       return () => { isMounted = false; };
-    }, []);
+    }, [applyIncomingData]);
 
-    // Auto-push any local modifications to the shared server (debounced 350ms)
+    // Auto-push local modifications to dev server / Git if token configured (debounced 500ms)
     useEffect(() => {
       if (isInitialMountRef.current) {
         isInitialMountRef.current = false;
@@ -1036,7 +1131,7 @@
       if (pushTimeoutRef.current) clearTimeout(pushTimeoutRef.current);
       pushTimeoutRef.current = setTimeout(() => {
         pushCurrentStateToServer();
-      }, 350);
+      }, 500);
 
       return () => {
         if (pushTimeoutRef.current) clearTimeout(pushTimeoutRef.current);
@@ -1055,9 +1150,9 @@
       pushCurrentStateToServer
     ]);
 
-    // Live poller: checks for external changes every 1.8s + on mobile screen unlock / app focus
+    // Git poller: checks for Git updates every 4.5s + on mobile screen unlock / app focus
     useEffect(() => {
-      const interval = setInterval(checkRemoteUpdates, 1800);
+      const interval = setInterval(checkRemoteUpdates, 4500);
       const onFocus = () => checkRemoteUpdates();
       const onVisibility = () => {
         if (!document.hidden) checkRemoteUpdates();
@@ -2792,14 +2887,14 @@
 
         // Settings Menu
         h('div', { className: 'settings-hub-grid' },
-          // Clean DATA & SYNC (Requirement #7)
+          // Clean DATA & GIT SYNC
           h('div', { className: 'settings-row', onClick: () => setIsDataSyncOpen(true) },
             h('div', { className: 'settings-row-left' },
               h('span', { className: 'settings-icon' }, '☁️'),
               h('div', null,
-                h('div', { className: 'settings-label' }, 'Data & Live Sync'),
+                h('div', { className: 'settings-label' }, 'Git & Cloud Data Sync'),
                 h('div', { className: 'settings-sub' },
-                  liveSyncConnected ? '🟢 Live Sync Active (Phone & PC connected)' : 'Local storage (Tap to sync)'
+                  liveSyncConnected ? '🟢 Git Sync Active (Radhadevan/expense-tracker)' : 'Git storage (Tap to pull/sync)'
                 )
               )
             ),
@@ -3149,13 +3244,40 @@
     const renderDataSyncModal = () => {
       if (!isDataSyncOpen) return null;
 
+      const currentState = {
+        timestamp: Date.now(),
+        profile,
+        transactions,
+        categories,
+        goals,
+        contributions,
+        monthlyBudgetLimit,
+        categoryBudgets,
+        recurringPayments,
+        accounts,
+        appLock: { enabled: appLock.enabled, pin: appLock.pin }
+      };
+
       return h(DataSyncModalDialog, {
         config: supabaseConfig,
         liveSyncConnected,
+        lastSyncTime,
+        currentState,
+        onPullGit: () => pullFromGit(true),
+        onPushGit: async (token) => {
+          try {
+            showToast('🚀 Pushing commit to GitHub repository...');
+            await commitToGitHub(token, currentState);
+            setLiveSyncConnected(true);
+            setLastSyncTime(new Date());
+            showToast('✅ Committed & pushed to GitHub main branch!');
+          } catch (err) {
+            showToast('❌ Git commit failed: ' + (err.message || 'Error'));
+          }
+        },
         onForceSync: () => {
-          checkRemoteUpdates();
+          pullFromGit(true);
           pushCurrentStateToServer();
-          showToast('🟢 Synchronizing with other devices...');
         },
         onClose: () => setIsDataSyncOpen(false),
         onSave: (newConfig) => {
@@ -3270,20 +3392,17 @@
           }, 'Today')
         ),
 
-        // Header Right: LIVE SYNC & OFFLINE INDICATOR
+        // Header Right: LIVE GIT SYNC & OFFLINE INDICATOR
         h('div', { className: 'header-right' },
           liveSyncConnected
             ? h('button', {
                 type: 'button',
                 className: 'sync-status-badge live-sync-btn',
-                title: 'Live Cross-Device Sync: Active. Tap to sync now.',
-                onClick: () => {
-                  checkRemoteUpdates();
-                  showToast('🟢 Live Synced with Server & Devices');
-                }
+                title: 'Git-Synchronized. Tap to pull latest from Git.',
+                onClick: () => pullFromGit(true)
               },
                 h('span', { className: 'sync-dot' }),
-                'Live Synced'
+                'Git Synced'
               )
             : !isOnline
             ? h('div', { className: 'sync-status-badge', style: { color: 'var(--warning-amber)' } },
@@ -3293,14 +3412,11 @@
             : h('button', {
                 type: 'button',
                 className: 'sync-status-badge live-sync-btn offline-state',
-                title: 'Tap to connect to live sync server',
-                onClick: () => {
-                  checkRemoteUpdates();
-                  showToast('Checking sync connection...');
-                }
+                title: 'Tap to fetch data from Git repository',
+                onClick: () => pullFromGit(true)
               },
                 h('span', { className: 'sync-dot offline' }),
-                'Local Only'
+                'Sync Git'
               )
         )
       ),
@@ -4158,18 +4274,37 @@
     );
   }
 
-  // Clean Data & Cloud Sync Modal Dialog (Requirement #7)
-  function DataSyncModalDialog({ config, liveSyncConnected, onForceSync, onClose, onSave }) {
+  // Clean Data & Git Synchronization Modal Dialog
+  function DataSyncModalDialog({ config, liveSyncConnected, lastSyncTime, currentState, onPullGit, onPushGit, onForceSync, onClose, onSave }) {
     const [showAdvanced, setShowAdvanced] = useState(false);
     const [url, setUrl] = useState(config.url || '');
     const [anonKey, setAnonKey] = useState(config.anonKey || '');
-    const [syncHost, setSyncHost] = useState(() => {
-      try {
-        return localStorage.getItem('exptrk_sync_server_url') || getSyncServerBaseUrl();
-      } catch {
-        return getSyncServerBaseUrl();
-      }
+    const [ghPat, setGhPat] = useState(() => {
+      try { return localStorage.getItem('exptrk_github_pat') || ''; } catch { return ''; }
     });
+    const [isPushing, setIsPushing] = useState(false);
+    const [isPulling, setIsPulling] = useState(false);
+
+    const handleSavePat = () => {
+      try {
+        localStorage.setItem('exptrk_github_pat', ghPat.trim());
+      } catch {}
+    };
+
+    const handleDownloadJson = () => {
+      try {
+        const jsonStr = JSON.stringify(currentState, null, 2);
+        const blob = new Blob([jsonStr], { type: 'application/json' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'shared_store.json';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+      } catch (err) {
+        alert('Download failed: ' + err.message);
+      }
+    };
 
     const handleSave = () => {
       onSave({
@@ -4185,63 +4320,95 @@
         h('div', { className: 'sheet-header' },
           h('div', { className: 'sheet-title' },
             h('span', null, '☁️'),
-            ' Data & Live Sync'
+            ' Git & Cloud Data Sync'
           ),
           h('button', { type: 'button', className: 'sheet-close-btn', onClick: onClose }, '✕')
         ),
 
+        // Git Sync Status Card
         h('div', { className: 'stat-widget', style: { marginBottom: '16px' } },
           h('div', { style: { display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '6px' } },
             h('span', { className: `sync-dot ${liveSyncConnected ? '' : 'offline'}` }),
             h('strong', { style: { color: '#fff', fontSize: '14px' } },
-              liveSyncConnected ? 'Live Multi-Device Sync Active 🟢' : 'Connecting to Server...'
+              liveSyncConnected ? 'Git Synchronization Active 🟢' : 'Connecting to Git...'
             )
           ),
-          h('div', { style: { fontSize: '12.5px', color: 'var(--text-muted)', lineHeight: 1.5 } },
-            liveSyncConnected
-              ? 'Changes made on mobile or desktop are automatically updated across all devices in real-time.'
-              : 'Connecting to Wi-Fi server. Make sure your phone is connected to the same Wi-Fi network as your PC.'
-          )
-        ),
-
-        // Wi-Fi Host IP Configuration
-        h('div', { className: 'form-group', style: { marginBottom: '14px' } },
-          h('label', { className: 'form-label' }, 'Wi-Fi Sync Server Address'),
-          h('div', { style: { display: 'flex', gap: '8px' } },
-            h('input', {
-              type: 'text',
-              className: 'form-input',
-              style: { flex: 1, fontSize: '13px' },
-              value: syncHost,
-              placeholder: 'http://10.216.40.100:3000',
-              onChange: (e) => setSyncHost(e.target.value)
-            }),
-            h('button', {
-              type: 'button',
-              className: 'submit-btn',
-              style: { padding: '8px 12px', fontSize: '12px', whiteSpace: 'nowrap' },
-              onClick: () => {
-                if (syncHost.trim()) {
-                  localStorage.setItem('exptrk_sync_server_url', syncHost.trim());
-                }
-                if (onForceSync) onForceSync();
-              }
-            }, 'Save & Reconnect')
+          h('div', { style: { fontSize: '12px', color: 'var(--text-muted)', lineHeight: 1.5, marginBottom: '6px' } },
+            'Repository: ',
+            h('strong', { style: { color: 'var(--neon-green)' } }, 'Radhadevan/expense-tracker'),
+            ' (branch: main)'
           ),
-          h('div', { style: { fontSize: '11px', color: 'var(--text-dim)', marginTop: '4px' } },
-            'Default PC Address: http://10.216.40.100:3000'
+          h('div', { style: { fontSize: '11.5px', color: 'var(--text-dim)' } },
+            `Data file: data/shared_store.json • Last checked: ${lastSyncTime ? new Date(lastSyncTime).toLocaleTimeString() : 'Just now'}`
           )
         ),
 
+        // Primary Action: Pull Latest from Git
         h('button', {
           type: 'button',
           className: 'submit-btn',
-          style: { width: '100%', marginBottom: '14px' },
-          onClick: () => {
-            if (onForceSync) onForceSync();
-            onClose();
+          style: { width: '100%', marginBottom: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' },
+          disabled: isPulling,
+          onClick: async () => {
+            setIsPulling(true);
+            if (onPullGit) await onPullGit();
+            setIsPulling(false);
           }
-        }, '⚡ Force Live Sync Now'),
+        }, isPulling ? '🔄 Fetching Git...' : '⚡ Pull Latest from Git'),
+
+        // Git Direct Push Section
+        h('div', { className: 'form-group', style: { marginBottom: '14px' } },
+          h('label', { className: 'form-label' }, 'GitHub Personal Access Token (for Mobile Push to Git)'),
+          h('div', { style: { display: 'flex', gap: '8px' } },
+            h('input', {
+              type: 'password',
+              className: 'form-input',
+              style: { flex: 1, fontSize: '13px' },
+              value: ghPat,
+              placeholder: 'ghp_xxxxxxxxxxxx',
+              onChange: (e) => setGhPat(e.target.value)
+            }),
+            h('button', {
+              type: 'button',
+              className: 'secondary-btn',
+              style: { padding: '8px 12px', fontSize: '12px', whiteSpace: 'nowrap' },
+              onClick: () => {
+                handleSavePat();
+                alert('GitHub token saved to local storage.');
+              }
+            }, 'Save Token')
+          ),
+          h('div', { style: { fontSize: '11px', color: 'var(--text-dim)', marginTop: '4px' } },
+            'Token with "repo" permission allows committing directly from your phone.'
+          )
+        ),
+
+        // Push to Git button
+        h('button', {
+          type: 'button',
+          className: 'secondary-btn',
+          style: { width: '100%', marginBottom: '12px', borderColor: 'var(--border-subtle)', background: 'rgba(255,255,255,0.04)', color: '#fff' },
+          disabled: isPushing,
+          onClick: async () => {
+            const tokenToUse = ghPat.trim() || localStorage.getItem('exptrk_github_pat');
+            if (!tokenToUse) {
+              alert('Please enter your GitHub Personal Access Token above first to push commits directly to Git.');
+              return;
+            }
+            setIsPushing(true);
+            handleSavePat();
+            if (onPushGit) await onPushGit(tokenToUse);
+            setIsPushing(false);
+          }
+        }, isPushing ? '🚀 Committing to Git...' : '🚀 Commit & Push to Git Repository'),
+
+        // Download JSON button
+        h('button', {
+          type: 'button',
+          className: 'secondary-btn',
+          style: { width: '100%', marginBottom: '14px', fontSize: '12px' },
+          onClick: handleDownloadJson
+        }, '💾 Export data/shared_store.json'),
 
         // Advanced Settings Expandable
         h('div', { style: { borderTop: '1px solid var(--border-subtle)', paddingTop: '12px' } },

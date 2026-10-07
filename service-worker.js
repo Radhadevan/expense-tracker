@@ -1,11 +1,11 @@
-const CACHE_NAME = 'exptrk-v3.0';
+const CACHE_NAME = 'exptrk-v4.0';
 const ASSETS = [
   './',
   './index.html',
-  './style.css?v=3.0',
-  './sms-parser.js?v=3.0',
-  './sms-bridge.js?v=3.0',
-  './app.js?v=3.0',
+  './style.css?v=4.0',
+  './sms-parser.js?v=4.0',
+  './sms-bridge.js?v=4.0',
+  './app.js?v=4.0',
   './manifest.json',
   './icon.svg',
   'https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap',
@@ -44,9 +44,17 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   const url = event.request.url;
 
-  // NEVER cache API endpoints or live-reload checker
-  if (url.includes('/api/') || url.includes('/live-reload-check') || event.request.method !== 'GET') {
-    return; // Normal network handling
+  // NEVER cache data files, Git raw endpoints, GitHub API, or live reload
+  if (
+    url.includes('shared_store.json') ||
+    url.includes('/data/') ||
+    url.includes('github.com') ||
+    url.includes('githubusercontent.com') ||
+    url.includes('/api/') ||
+    url.includes('/live-reload-check') ||
+    event.request.method !== 'GET'
+  ) {
+    return; // Pass through to live network without intercepting
   }
 
   // Network-First strategy: Always fetch freshest assets first; fallback to offline cache if offline
