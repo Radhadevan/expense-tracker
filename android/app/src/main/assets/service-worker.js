@@ -1,11 +1,11 @@
-const CACHE_NAME = 'exptrk-v4.0';
+const CACHE_NAME = 'exptrk-v4.1';
 const ASSETS = [
   './',
   './index.html',
-  './style.css?v=4.0',
-  './sms-parser.js?v=4.0',
-  './sms-bridge.js?v=4.0',
-  './app.js?v=4.0',
+  './style.css?v=4.1',
+  './sms-parser.js?v=4.1',
+  './sms-bridge.js?v=4.1',
+  './app.js?v=4.1',
   './manifest.json',
   './icon.svg',
   'https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap',
@@ -44,12 +44,13 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   const url = event.request.url;
 
-  // NEVER cache data files, Git raw endpoints, GitHub API, or live reload
+  // NEVER cache data files, Git raw endpoints, GitHub API, jsDelivr data, or live reload
   if (
     url.includes('shared_store.json') ||
     url.includes('/data/') ||
     url.includes('github.com') ||
     url.includes('githubusercontent.com') ||
+    url.includes('jsdelivr.net') ||
     url.includes('/api/') ||
     url.includes('/live-reload-check') ||
     event.request.method !== 'GET'

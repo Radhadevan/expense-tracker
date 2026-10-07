@@ -46,37 +46,81 @@
     return DEFAULT_SYNC_HOST;
   }
 
-  // Universal Git-first data fetcher: reads directly from GitHub Pages or raw.githubusercontent.com
+  // Multi-tier resilient Git data fetcher: supports GitHub Pages, jsDelivr CDN, GitHub REST API, and raw CDN
   async function fetchGitSharedData() {
     const cacheBuster = Date.now();
+    const candidateUrls = [];
 
-    // Strategy 1: Local / GitHub Pages relative path (fastest)
-    try {
-      const res = await fetch(`${LOCAL_STORE_URL}?_t=${cacheBuster}`, { cache: 'no-store' });
-      if (res.ok) {
-        const json = await res.json();
-        if (json && (json.transactions || json.profile)) return json;
-      }
-    } catch (_) {}
+    // 1. Current Origin / Dynamic Relative Path (Guarantees correct path even without trailing slash)
+    if (typeof window !== 'undefined' && window.location) {
+      try {
+        const origin = window.location.origin || '';
+        const pathname = window.location.pathname || '/';
+        const basePath = pathname.includes('/expense-tracker')
+          ? '/expense-tracker/'
+          : pathname.endsWith('/')
+          ? pathname
+          : pathname.slice(0, pathname.lastIndexOf('/') + 1);
+        if (origin && origin.startsWith('http')) {
+          candidateUrls.push(`${origin}${basePath}data/shared_store.json?_t=${cacheBuster}`);
+        }
+      } catch (_) {}
+    }
 
-    // Strategy 2: Direct raw.githubusercontent.com (works globally across any phone/network)
-    try {
-      const res = await fetch(`${GITHUB_RAW_URL}?_t=${cacheBuster}`, { cache: 'no-store' });
-      if (res.ok) {
-        const json = await res.json();
-        if (json && (json.transactions || json.profile)) return json;
-      }
-    } catch (_) {}
+    // 2. Canonical GitHub Pages URL
+    candidateUrls.push(`https://radhadevan.github.io/expense-tracker/data/shared_store.json?_t=${cacheBuster}`);
 
-    // Strategy 3: Local dev server if active
+    // 3. Ultra-fast jsDelivr GitHub CDN (CORS enabled, unblockable across mobile networks)
+    candidateUrls.push(`https://cdn.jsdelivr.net/gh/Radhadevan/expense-tracker@main/data/shared_store.json?_t=${cacheBuster}`);
+
+    // 4. Raw GitHub CDN
+    candidateUrls.push(`https://raw.githubusercontent.com/Radhadevan/expense-tracker/main/data/shared_store.json?_t=${cacheBuster}`);
+
+    // 5. Local Dev Server if running
     try {
       const base = getSyncServerBaseUrl();
-      const res = await fetch(`${base}/api/sync-data?_t=${cacheBuster}`, { cache: 'no-store' });
-      if (res.ok) {
-        const json = await res.json();
-        if (json && (json.transactions || json.profile)) return json;
+      if (base && !base.includes('github.io')) {
+        candidateUrls.push(`${base}/api/sync-data?_t=${cacheBuster}`);
       }
     } catch (_) {}
+
+    // Try each direct JSON endpoint sequentially
+    for (const url of candidateUrls) {
+      try {
+        const res = await fetch(url, { cache: 'no-store' });
+        if (res.ok) {
+          const json = await res.json();
+          if (json && (json.transactions || json.profile)) {
+            console.log('[GitSync] Loaded data from:', url);
+            return json;
+          }
+        }
+      } catch (err) {
+        console.warn('[GitSync] Endpoint unreachable:', url, err.message);
+      }
+    }
+
+    // 6. Ultimate Fallback: Official GitHub REST API Contents (Decodes Base64)
+    try {
+      const apiUrl = `https://api.github.com/repos/${GITHUB_REPO}/contents/data/shared_store.json?_t=${cacheBuster}`;
+      const res = await fetch(apiUrl, {
+        headers: { 'Accept': 'application/vnd.github.v3+json' },
+        cache: 'no-store'
+      });
+      if (res.ok) {
+        const fileObj = await res.json();
+        if (fileObj && fileObj.content) {
+          const decoded = decodeURIComponent(escape(atob(fileObj.content.replace(/\s/g, ''))));
+          const json = JSON.parse(decoded);
+          if (json && (json.transactions || json.profile)) {
+            console.log('[GitSync] Loaded data via GitHub REST API contents');
+            return json;
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('[GitSync] GitHub REST API fallback failed:', e.message);
+    }
 
     return null;
   }
