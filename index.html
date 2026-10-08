@@ -17,8 +17,40 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
   
-  <link rel="stylesheet" href="style.css?v=4.4">
+  <link rel="stylesheet" href="style.css?v=4.5">
   
+  <!-- Immediate Early Theme Color Initialization (Prevents Style Flash) -->
+  <script>
+    (function() {
+      try {
+        var s = localStorage.getItem('expense_tracker_profile');
+        var color = '#c8f53c';
+        if (s) {
+          var p = JSON.parse(s);
+          if (p && p.themeColor) color = p.themeColor;
+        }
+        var root = document.documentElement;
+        root.style.setProperty('--neon-lime', color);
+        root.style.setProperty('--neon-green', color);
+        root.style.setProperty('--theme-accent', color);
+        var c = color.replace('#', '');
+        if (c.length === 3) c = c.split('').map(function(x) { return x + x; }).join('');
+        var num = parseInt(c, 16);
+        if (!isNaN(num)) {
+          var r = (num >> 16) & 255;
+          var g = (num >> 8) & 255;
+          var b = num & 255;
+          root.style.setProperty('--neon-green-glow', 'rgba(' + r + ',' + g + ',' + b + ',0.35)');
+          root.style.setProperty('--neon-green-subtle', 'rgba(' + r + ',' + g + ',' + b + ',0.12)');
+          root.style.setProperty('--neon-green-border', 'rgba(' + r + ',' + g + ',' + b + ',0.28)');
+          root.style.setProperty('--neon-lime-subtle', 'rgba(' + r + ',' + g + ',' + b + ',0.12)');
+          root.style.setProperty('--neon-lime-border', 'rgba(' + r + ',' + g + ',' + b + ',0.28)');
+          root.style.setProperty('--border-card', 'rgba(' + r + ',' + g + ',' + b + ',0.18)');
+        }
+      } catch (e) {}
+    })();
+  </script>
+
   <!-- React 18 & ReactDOM Production UMD Bundles -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
@@ -29,7 +61,7 @@
   <!-- jsPDF & AutoTable for Clean Monthly Statement Exports -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
-  <script src="pdf-generator.js?v=4.4"></script>
+  <script src="pdf-generator.js?v=4.5"></script>
 </head>
 <body>
   <!-- APPLICATION MOUNT ROOT -->
@@ -47,17 +79,17 @@
   </div>
 
   <!-- SMS TRANSACTION DETECTION & ANDROID NATIVE BRIDGE -->
-  <script src="sms-parser.js?v=4.4"></script>
-  <script src="sms-bridge.js?v=4.4"></script>
+  <script src="sms-parser.js?v=4.5"></script>
+  <script src="sms-bridge.js?v=4.5"></script>
 
   <!-- MAIN REACT APPLICATION LOGIC -->
-  <script src="app.js?v=4.4"></script>
+  <script src="app.js?v=4.5"></script>
 
   <!-- PWA SERVICE WORKER REGISTRATION -->
   <script>
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
-        navigator.serviceWorker.register('./service-worker.js?v=4.4')
+        navigator.serviceWorker.register('./service-worker.js?v=4.5')
           .then((reg) => {
             console.log('[PWA] Service Worker registered with scope:', reg.scope);
             try { reg.update(); } catch (e) {}

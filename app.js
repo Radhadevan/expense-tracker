@@ -182,12 +182,56 @@
     { code: 'QAR', symbol: 'ر.ق', label: 'ر.ق QAR (Qatari Riyal)' }
   ];
 
+  // --- COLOR THEME PRESETS & UNIVERSAL APPLICATOR ---
+  const THEME_PRESETS = [
+    { name: 'Neon Lime', color: '#c8f53c', desc: 'Home Screen Theme' },
+    { name: 'Emerald Mint', color: '#10b981', desc: 'Classic Finance' },
+    { name: 'Electric Cyan', color: '#06b6d4', desc: 'Cyber Aqua' },
+    { name: 'Sky Blue', color: '#38bdf8', desc: 'Cool Minimal' },
+    { name: 'Royal Violet', color: '#a855f7', desc: 'Deep Neon' },
+    { name: 'Sunset Amber', color: '#f59e0b', desc: 'Warm Gold' },
+    { name: 'Electric Coral', color: '#ff4d79', desc: 'Vibrant Coral' },
+    { name: 'Hot Rose', color: '#f43f5e', desc: 'Bold Red-Pink' }
+  ];
+
+  function getThemeName(hex) {
+    if (!hex) return 'Neon Lime';
+    const match = THEME_PRESETS.find((p) => p.color.toLowerCase() === hex.toLowerCase());
+    return match ? match.name : hex.toUpperCase();
+  }
+
+  function applyThemeColor(hexColor) {
+    if (!hexColor || typeof document === 'undefined') return;
+    const color = hexColor.trim();
+    const root = document.documentElement;
+
+    root.style.setProperty('--neon-lime', color);
+    root.style.setProperty('--neon-green', color);
+    root.style.setProperty('--theme-accent', color);
+
+    let c = color.replace('#', '');
+    if (c.length === 3) c = c.split('').map((x) => x + x).join('');
+    const num = parseInt(c, 16);
+    if (!isNaN(num)) {
+      const r = (num >> 16) & 255;
+      const g = (num >> 8) & 255;
+      const b = num & 255;
+      root.style.setProperty('--neon-green-glow', `rgba(${r}, ${g}, ${b}, 0.35)`);
+      root.style.setProperty('--neon-green-subtle', `rgba(${r}, ${g}, ${b}, 0.12)`);
+      root.style.setProperty('--neon-green-border', `rgba(${r}, ${g}, ${b}, 0.28)`);
+      root.style.setProperty('--neon-lime-subtle', `rgba(${r}, ${g}, ${b}, 0.12)`);
+      root.style.setProperty('--neon-lime-border', `rgba(${r}, ${g}, ${b}, 0.28)`);
+      root.style.setProperty('--border-card', `rgba(${r}, ${g}, ${b}, 0.18)`);
+    }
+  }
+
   // --- DEFAULT DATA SEEDS ---
   const DEFAULT_PROFILE = {
     id: 'user-default-1',
     name: 'Radhadevan',
     currency: '₹',
-    currencyCode: 'INR'
+    currencyCode: 'INR',
+    themeColor: '#c8f53c'
   };
 
   const DEFAULT_CATEGORIES = [
@@ -786,11 +830,21 @@
     const [profile, setProfile] = useState(() => {
       try {
         const s = localStorage.getItem(STORAGE_KEYS.PROFILE);
-        return s ? JSON.parse(s) : DEFAULT_PROFILE;
+        const parsed = s ? JSON.parse(s) : DEFAULT_PROFILE;
+        return {
+          ...DEFAULT_PROFILE,
+          ...parsed,
+          themeColor: parsed.themeColor || '#c8f53c'
+        };
       } catch {
         return DEFAULT_PROFILE;
       }
     });
+
+    // Dynamically apply color theme across the entire application
+    useEffect(() => {
+      applyThemeColor(profile.themeColor || '#c8f53c');
+    }, [profile.themeColor]);
 
     const [transactions, setTransactions] = useState(() => {
       try {
@@ -1962,7 +2016,8 @@
       if (!breakdownList || breakdownList.length === 0 || totalExpenses <= 0) {
         return [];
       }
-      const DONUT_COLORS = ['#c8f53c', '#ff4d79', '#a855f7', '#94a3b8', '#06b6d4', '#f59e0b', '#ec4899'];
+      const primaryAccent = profile.themeColor || '#c8f53c';
+      const DONUT_COLORS = [primaryAccent, '#ff4d79', '#a855f7', '#94a3b8', '#06b6d4', '#f59e0b', '#ec4899'];
       if (breakdownList.length <= 4) {
         return breakdownList.map((item, idx) => ({
           ...item,
@@ -3038,7 +3093,111 @@
           )
         ),
 
-        // 3. Settings Hub
+        // 3. Color Theme & Custom Accent Selector
+        h('div', { className: 'stat-widget theme-selector-widget', style: { marginBottom: '16px' } },
+          h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' } },
+            h('div', { className: 'section-title', style: { fontSize: '13px', margin: 0 } },
+              h('span', null, '🎨'),
+              ' Color Theme & Accent'
+            ),
+            h('div', {
+              style: {
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                fontSize: '11.5px',
+                fontWeight: 700,
+                color: profile.themeColor || '#c8f53c',
+                background: 'rgba(255, 255, 255, 0.05)',
+                padding: '3px 9px',
+                borderRadius: 'var(--radius-pill)',
+                border: '1px solid var(--border-subtle)'
+              }
+            },
+              h('span', {
+                style: {
+                  width: '9px',
+                  height: '9px',
+                  borderRadius: '50%',
+                  background: profile.themeColor || '#c8f53c',
+                  boxShadow: `0 0 8px ${profile.themeColor || '#c8f53c'}`
+                }
+              }),
+              getThemeName(profile.themeColor || '#c8f53c')
+            )
+          ),
+          h('div', { style: { fontSize: '12px', color: 'var(--text-dim)', marginBottom: '14px' } },
+            'Personalize your finance dashboard accent color across all screens.'
+          ),
+
+          // Preset Chips Grid
+          h('div', { className: 'theme-presets-grid' },
+            THEME_PRESETS.map((preset) => {
+              const isSelected = (profile.themeColor || '#c8f53c').toLowerCase() === preset.color.toLowerCase();
+              return h('button', {
+                key: preset.color,
+                type: 'button',
+                className: `theme-preset-btn ${isSelected ? 'active' : ''}`,
+                onClick: () => {
+                  setProfile((p) => ({ ...p, themeColor: preset.color }));
+                  showToast(`Theme updated to ${preset.name}!`);
+                }
+              },
+                h('span', {
+                  className: 'theme-color-swatch',
+                  style: { backgroundColor: preset.color, boxShadow: isSelected ? `0 0 10px ${preset.color}` : 'none' }
+                }),
+                h('span', { className: 'theme-preset-name' }, preset.name),
+                isSelected ? h('span', { className: 'theme-check' }, '✓') : null
+              );
+            })
+          ),
+
+          // Custom Color Picker Row
+          h('div', { className: 'custom-color-row' },
+            h('div', { style: { display: 'flex', alignItems: 'center', gap: '10px' } },
+              h('label', {
+                className: 'custom-picker-label',
+                title: 'Click to open color picker'
+              },
+                h('input', {
+                  type: 'color',
+                  className: 'custom-color-input',
+                  value: profile.themeColor || '#c8f53c',
+                  onChange: (e) => {
+                    const chosen = e.target.value;
+                    setProfile((p) => ({ ...p, themeColor: chosen }));
+                  }
+                }),
+                h('div', {
+                  className: 'custom-color-preview-disc',
+                  style: { backgroundColor: profile.themeColor || '#c8f53c' }
+                })
+              ),
+              h('div', null,
+                h('div', { style: { fontSize: '13px', fontWeight: 700, color: '#fff' } }, 'Custom Accent Color'),
+                h('div', { style: { fontSize: '11px', color: 'var(--text-dim)' } }, 'Pick any color via hex or picker')
+              )
+            ),
+            h('div', { className: 'custom-hex-input-wrap' },
+              h('span', { style: { color: 'var(--text-dim)', fontSize: '13px', fontWeight: 800 } }, '#'),
+              h('input', {
+                type: 'text',
+                maxLength: 6,
+                className: 'custom-hex-input',
+                value: (profile.themeColor || '#c8f53c').replace('#', '').toUpperCase(),
+                onChange: (e) => {
+                  const cleaned = e.target.value.replace(/[^0-9A-Fa-f]/g, '').slice(0, 6);
+                  if (cleaned.length === 6) {
+                    setProfile((p) => ({ ...p, themeColor: `#${cleaned}` }));
+                  }
+                }
+              })
+            )
+          )
+        ),
+
+        // 4. Settings Hub
         h('div', { className: 'settings-hub-grid' },
           // Manage Categories
           h('div', { className: 'settings-row', onClick: () => setIsManageCategoriesOpen(true) },
